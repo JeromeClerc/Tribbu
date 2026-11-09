@@ -59,7 +59,14 @@ interface AuthContextValue {
     updates: Partial<
       Pick<
         Profile,
-        'display_name' | 'phone_number' | 'sms_notifications_enabled'
+        | 'display_name'
+        | 'first_name'
+        | 'last_name'
+        | 'phone_number'
+        | 'address'
+        | 'postal_code'
+        | 'city'
+        | 'sms_notifications_enabled'
       >
     >
   ) => Promise<void>;
@@ -307,7 +314,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     updates: Partial<
       Pick<
         Profile,
-        'display_name' | 'phone_number' | 'sms_notifications_enabled'
+        | 'display_name'
+        | 'first_name'
+        | 'last_name'
+        | 'phone_number'
+        | 'address'
+        | 'postal_code'
+        | 'city'
+        | 'sms_notifications_enabled'
       >
     >
   ) => {

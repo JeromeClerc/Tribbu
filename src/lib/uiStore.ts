@@ -9,6 +9,7 @@ export type ModalType =
   | 'create-feu-de-camp'
   | 'role-manager'
   | 'delete-association'
+  | 'user-profile'
   | null;
 
 export interface ReplyTarget {

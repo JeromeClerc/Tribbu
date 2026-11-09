@@ -25,6 +25,7 @@ import { InviteModal } from '@/components/modals/InviteModal';
 import { CreateTippiModal } from '@/components/modals/CreateTippiModal';
 import { RoleManager } from '@/components/modals/RoleManager';
 import { DeleteAssociationModal } from '@/components/modals/DeleteAssociationModal';
+import { UserProfileModal } from '@/components/modals/UserProfileModal';
 import { AuthScreen } from '@/components/modals/AuthScreen';
 
 export const App: React.FC = () => {
@@ -357,6 +358,8 @@ export const App: React.FC = () => {
         profiles={profiles}
         membresRoles={membresRoles}
       />
+
+      <UserProfileModal />
     </div>
   );
 };

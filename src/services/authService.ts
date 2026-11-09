@@ -157,7 +157,10 @@ export const authService = {
   async getCurrentProfile(): Promise<Profile | null> {
     const savedId = localStorage.getItem(DEMO_USER_STORAGE_KEY);
     const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
-    const allLocalProfiles = [...DEMO_PROFILES, ...customProfiles];
+    const profileMap = new Map<string, Profile>();
+    for (const p of DEMO_PROFILES) profileMap.set(p.id, p);
+    for (const p of customProfiles) profileMap.set(p.id, p);
+    const allLocalProfiles = Array.from(profileMap.values());
 
     if (isFirebaseConfigured && firebaseAuth && firestoreDb) {
       const fbUser = firebaseAuth.currentUser;
@@ -659,19 +662,59 @@ export const authService = {
   },
 
   /**
-   * Met à jour `last_seen_at` et les préférences de notification téléphone/SMS.
+   * Met à jour les informations personnelles facultatives du membre :
+   * Prénom, Nom, Téléphone, Adresse, NPA, Commune, notifications SMS et `last_seen_at`.
+   * Seul l'e-mail reste immuable car il sert de clé d'accès et d'invitation.
    */
   async updateProfilePreferences(
     userId: string,
     updates: Partial<
       Pick<
         Profile,
-        'display_name' | 'phone_number' | 'sms_notifications_enabled' | 'last_seen_at'
+        | 'display_name'
+        | 'first_name'
+        | 'last_name'
+        | 'phone_number'
+        | 'address'
+        | 'postal_code'
+        | 'city'
+        | 'sms_notifications_enabled'
+        | 'last_seen_at'
       >
     >
   ): Promise<void> {
+    // 1. Mise à jour dans le cache local
+    const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
+    const profileMap = new Map<string, Profile>();
+    for (const p of DEMO_PROFILES) profileMap.set(p.id, p);
+    for (const p of customProfiles) profileMap.set(p.id, p);
+
+    const existing = profileMap.get(userId);
+    if (existing) {
+      const updatedProfile: Profile = {
+        ...existing,
+        ...updates,
+      };
+      const nextCustom = [
+        ...customProfiles.filter((p) => p.id !== userId),
+        updatedProfile,
+      ];
+      writeLocal(PROFILES_STORAGE_KEY, nextCustom);
+    }
+
+    // 2. Mise à jour dans Cloud Firestore et Firebase Auth
     if (isFirebaseConfigured && firestoreDb) {
       try {
+        if (
+          updates.display_name &&
+          firebaseAuth?.currentUser &&
+          firebaseAuth.currentUser.uid === userId
+        ) {
+          await updateProfile(firebaseAuth.currentUser, {
+            displayName: updates.display_name,
+          });
+        }
+
         const profRef = doc(firestoreDb, 'profiles', userId);
         await setDoc(
           profRef,
@@ -685,6 +728,8 @@ export const authService = {
         // Ignore si règles non publiées
       }
     }
+
+    window.dispatchEvent(new CustomEvent('tribbu-local-mutation'));
   },
 
   /**

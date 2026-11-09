@@ -6,8 +6,13 @@ export interface Profile {
   id: string;
   email: string;
   display_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   avatar_url: string | null;
   phone_number: string | null;
+  address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
   sms_notifications_enabled?: boolean;
   grande_tribbu_ids?: string[];
   last_seen_at: string;

@@ -431,13 +431,12 @@ export const AuthScreen: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                    Votre prénom et nom
+                    Votre prénom et nom (optionnel)
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                     <input
                       type="text"
-                      required
                       value={inviteDisplayName}
                       onChange={(e) => setInviteDisplayName(e.target.value)}
                       placeholder="Ex: Julien Marchand"
@@ -559,13 +558,12 @@ export const AuthScreen: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                      Votre prénom et nom *
+                      Votre prénom et nom (optionnel)
                     </label>
                     <div className="relative">
                       <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       <input
                         type="text"
-                        required
                         value={creatorDisplayName}
                         onChange={(e) => setCreatorDisplayName(e.target.value)}
                         placeholder="Ex: Claire Fontaine"

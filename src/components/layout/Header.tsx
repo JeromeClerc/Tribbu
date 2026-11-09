@@ -260,22 +260,30 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* Profil Utilisateur Connecté + Accès Portail SaaS */}
+        {/* Profil Utilisateur Connecté (Cliquable pour gérer ses informations personnelles) + Accès Portail SaaS */}
         {user && (
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-tribbu-charcoal-border">
-            <Avatar
-              name={user.display_name}
-              src={user.avatar_url}
-              role={globalRole}
-              size="sm"
-              online={true}
-            />
-            <div className="hidden lg:flex flex-col items-start leading-tight">
-              <span className="text-xs font-semibold text-slate-800 dark:text-white max-w-[120px] truncate">
-                {user.display_name}
-              </span>
-              <RoleBadge role={globalRole} size="xs" />
-            </div>
+          <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200 dark:border-tribbu-charcoal-border">
+            <button
+              type="button"
+              onClick={() => openModal('user-profile')}
+              className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-slate-100 dark:hover:bg-tribbu-charcoal-surface transition-colors text-left group"
+              title="Gérer mes informations personnelles (Nom, Prénom, Téléphone, Adresse, NPA, Commune)"
+              aria-label="Ouvrir mon profil utilisateur"
+            >
+              <Avatar
+                name={user.display_name}
+                src={user.avatar_url}
+                role={globalRole}
+                size="sm"
+                online={true}
+              />
+              <div className="hidden sm:flex flex-col items-start leading-tight">
+                <span className="text-xs font-semibold text-slate-800 dark:text-white group-hover:text-tribbu-teal transition-colors max-w-[130px] truncate">
+                  {user.display_name}
+                </span>
+                <RoleBadge role={globalRole} size="xs" />
+              </div>
+            </button>
             <button
               type="button"
               onClick={() => void handleGoToSaasPortal()}
