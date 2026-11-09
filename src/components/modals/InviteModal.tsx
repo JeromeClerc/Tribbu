@@ -1,5 +1,13 @@
-import React, { useState } from 'react';
-import { Check, Copy, ExternalLink, Mail, Sparkles, UserPlus } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  Check,
+  Compass,
+  Copy,
+  ExternalLink,
+  Mail,
+  Sparkles,
+  UserPlus,
+} from 'lucide-react';
 import { Modal } from '@/components/common/Modal';
 import { useUIStore } from '@/lib/uiStore';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,8 +27,8 @@ export const InviteModal: React.FC<InviteModalProps> = ({
   tribbus,
   onCreateInvitation,
 }) => {
-  const { activeModal, closeModal } = useUIStore();
-  const { user, globalRole, userRoles } = useAuth();
+  const { activeModal, closeModal, openModal } = useUIStore();
+  const { user, globalRole, userRoles, activeAssociation } = useAuth();
 
   const manageableTribbus = React.useMemo(() => {
     if (globalRole === 'MANITOU') return tribbus;
@@ -37,7 +45,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
 
   const [email, setEmail] = useState('');
   const [selectedTribbuId, setSelectedTribbuId] = useState(
-    manageableTribbus[0]?.id || tribbus[0]?.id || ''
+    manageableTribbus[0]?.id || tribbus[0]?.id || 'GRANDE_TRIBBU'
   );
   const [role, setRole] = useState<TribbuRole>('PYGMEE');
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
@@ -46,15 +54,28 @@ export const InviteModal: React.FC<InviteModalProps> = ({
 
   const isOpen = activeModal === 'invite';
 
+  useEffect(() => {
+    if (
+      manageableTribbus.length > 0 &&
+      (selectedTribbuId === 'GRANDE_TRIBBU' ||
+        !manageableTribbus.some((t) => t.id === selectedTribbuId))
+    ) {
+      setSelectedTribbuId(manageableTribbus[0].id);
+    } else if (manageableTribbus.length === 0) {
+      setSelectedTribbuId('GRANDE_TRIBBU');
+    }
+  }, [manageableTribbus, selectedTribbuId]);
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !email.trim() || !selectedTribbuId) return;
+    if (!user || !email.trim()) return;
 
     setIsSubmitting(true);
     try {
       const res = await onCreateInvitation({
         email: email.trim(),
-        tribbuId: selectedTribbuId,
+        tribbuId:
+          selectedTribbuId === 'GRANDE_TRIBBU' ? '' : selectedTribbuId,
         role,
         invitedBy: user.id,
       });
@@ -103,10 +124,28 @@ export const InviteModal: React.FC<InviteModalProps> = ({
           </div>
         </div>
 
+        {manageableTribbus.length === 0 && globalRole === 'MANITOU' && (
+          <div className="p-3 rounded-xl bg-tribbu-teal/10 border border-tribbu-teal/30 flex items-center justify-between gap-2 text-xs">
+            <span className="text-slate-600 dark:text-slate-300">
+              Aucune Tribbu créée pour l'instant dans{' '}
+              <strong>{activeAssociation?.name}</strong>. Vous pouvez inviter au
+              niveau de la Grande Tribbu ou créer une Tribbu d'abord.
+            </span>
+            <button
+              type="button"
+              onClick={() => openModal('create-tribbu')}
+              className="px-2.5 py-1.5 rounded-lg bg-tribbu-teal text-white font-semibold shrink-0 inline-flex items-center gap-1 hover:bg-tribbu-teal-dark"
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Créer une Tribbu</span>
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-              Tribbu d'affiliation automatique
+              Périmètre / Tribbu d'affiliation
             </label>
             <select
               value={selectedTribbuId}
@@ -118,6 +157,11 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                   {t.name}
                 </option>
               ))}
+              {globalRole === 'MANITOU' && (
+                <option value="GRANDE_TRIBBU">
+                  La Grande Tribbu (Agora Générale uniquement)
+                </option>
+              )}
             </select>
           </div>
 

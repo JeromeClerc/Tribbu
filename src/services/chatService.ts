@@ -36,6 +36,7 @@ import type {
 } from '@/types/tribbu.types';
 
 const STORAGE_KEYS = {
+  ASSOCIATIONS: 'tribbu_state_associations',
   TRIBBUS: 'tribbu_state_tribbus',
   TIPPIS: 'tribbu_state_tippis',
   FEUX: 'tribbu_state_feux',
@@ -76,7 +77,8 @@ function writeLocal<T>(key: string, value: T): void {
 }
 
 export interface HierarchyBundle {
-  grandeTribbu: GrandeTribbu;
+  grandeTribbu: GrandeTribbu | null;
+  allAssociations: GrandeTribbu[];
   tribbus: Tribbu[];
   tippis: Tippi[];
   feuxDeCamp: FeuDeCamp[];
@@ -87,12 +89,37 @@ export interface HierarchyBundle {
 
 export const chatService = {
   /**
-   * Charge toute la hiérarchie de l'association depuis Cloud Firestore (ou stockage local en mode démo).
+   * Charge la hiérarchie STRICTEMENT ISOLÉE pour l'association correspondant au `slug`
+   * (ou à l'association de l'utilisateur connecté).
+   * Aucun membre, canal, Tribbu ou Tippi d'une autre association n'est exposé.
    */
-  async fetchHierarchy(): Promise<HierarchyBundle> {
+  async fetchHierarchy(targetSlug?: string | null): Promise<HierarchyBundle> {
     if (isFirebaseConfigured && firestoreDb) {
+      const gtSnap = await getDocs(collection(firestoreDb, 'grande_tribbu'));
+      const allAssociations = gtSnap.docs.map(
+        (d) => ({ id: d.id, ...(d.data() as Omit<GrandeTribbu, 'id'>) })
+      );
+
+      const activeGt = targetSlug
+        ? allAssociations.find((a) => a.slug === targetSlug) || null
+        : allAssociations[0] || null;
+
+      if (!activeGt) {
+        return {
+          grandeTribbu: null,
+          allAssociations,
+          tribbus: [],
+          tippis: [],
+          feuxDeCamp: [],
+          canaux: [],
+          membresRoles: [],
+          profiles: [],
+        };
+      }
+
+      const gtId = activeGt.id;
+
       const [
-        gtSnap,
         tribbusSnap,
         tippisSnap,
         feuxSnap,
@@ -100,32 +127,38 @@ export const chatService = {
         rolesSnap,
         profilesSnap,
       ] = await Promise.all([
-        getDocs(collection(firestoreDb, 'grande_tribbu')),
         getDocs(
-          query(collection(firestoreDb, 'tribbus'), orderBy('created_at', 'asc'))
+          query(
+            collection(firestoreDb, 'tribbus'),
+            where('grande_tribbu_id', '==', gtId)
+          )
         ),
         getDocs(
-          query(collection(firestoreDb, 'tippis'), orderBy('created_at', 'asc'))
+          query(
+            collection(firestoreDb, 'tippis'),
+            where('grande_tribbu_id', '==', gtId)
+          )
         ),
         getDocs(
           query(
             collection(firestoreDb, 'feux_de_camp'),
-            orderBy('created_at', 'asc')
+            where('grande_tribbu_id', '==', gtId)
           )
         ),
         getDocs(
-          query(collection(firestoreDb, 'canaux'), orderBy('created_at', 'asc'))
+          query(
+            collection(firestoreDb, 'canaux'),
+            where('grande_tribbu_id', '==', gtId)
+          )
         ),
-        getDocs(collection(firestoreDb, 'membres_roles')),
+        getDocs(
+          query(
+            collection(firestoreDb, 'membres_roles'),
+            where('grande_tribbu_id', '==', gtId)
+          )
+        ),
         getDocs(collection(firestoreDb, 'profiles')),
       ]);
-
-      const grandeTribbu = !gtSnap.empty
-        ? ({
-            id: gtSnap.docs[0].id,
-            ...gtSnap.docs[0].data(),
-          } as GrandeTribbu)
-        : DEMO_GRANDE_TRIBBU;
 
       const tribbus = tribbusSnap.docs.map(
         (d) => ({ id: d.id, ...(d.data() as Omit<Tribbu, 'id'>) })
@@ -148,49 +181,129 @@ export const chatService = {
       const membresRoles = rolesSnap.docs.map(
         (d) => ({ id: d.id, ...(d.data() as Omit<MembreRole, 'id'>) })
       );
-      const profiles = profilesSnap.docs.map(
+
+      // Isolation stricte des profils : uniquement les membres rattachés à cette Grande Tribbu
+      const memberUserIds = new Set<string>([activeGt.manitou_id]);
+      membresRoles.forEach((mr) => {
+        if (mr.user_id && mr.status !== 'REJECTED') {
+          memberUserIds.add(mr.user_id);
+        }
+      });
+
+      const allProfiles = profilesSnap.docs.map(
         (d) => ({ id: d.id, ...(d.data() as Omit<Profile, 'id'>) })
+      );
+      const isolatedProfiles = allProfiles.filter(
+        (p) =>
+          memberUserIds.has(p.id) || p.grande_tribbu_ids?.includes(gtId)
       );
 
       return {
-        grandeTribbu,
+        grandeTribbu: activeGt,
+        allAssociations,
         tribbus,
         tippis,
         feuxDeCamp,
         canaux,
         membresRoles,
-        profiles: profiles.length > 0 ? profiles : DEMO_PROFILES,
+        profiles: isolatedProfiles,
       };
     }
 
+    // Mode local : isolation stricte par association (`grande_tribbu_id`)
+    const allAssociations = readLocal<GrandeTribbu[]>(
+      STORAGE_KEYS.ASSOCIATIONS,
+      [DEMO_GRANDE_TRIBBU]
+    );
+
+    const activeGt = targetSlug
+      ? allAssociations.find((a) => a.slug === targetSlug) || null
+      : allAssociations[0] || null;
+
+    if (!activeGt) {
+      return {
+        grandeTribbu: null,
+        allAssociations,
+        tribbus: [],
+        tippis: [],
+        feuxDeCamp: [],
+        canaux: [],
+        membresRoles: [],
+        profiles: [],
+      };
+    }
+
+    const gtId = activeGt.id;
+
+    const allTribbus = readLocal<Tribbu[]>(STORAGE_KEYS.TRIBBUS, DEMO_TRIBBUS);
+    const tribbus = allTribbus.filter((t) => t.grande_tribbu_id === gtId);
+    const tribbuIdSet = new Set(tribbus.map((t) => t.id));
+
+    const allTippis = readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS);
+    const tippis = allTippis.filter(
+      (tp) =>
+        tp.grande_tribbu_id === gtId || tribbuIdSet.has(tp.tribbu_id)
+    );
+
+    const allFeux = readLocal<FeuDeCamp[]>(
+      STORAGE_KEYS.FEUX,
+      DEMO_FEUX_DE_CAMP
+    );
+    const feuxDeCamp = allFeux.filter((f) => f.grande_tribbu_id === gtId);
+
+    const allCanaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
+    const canaux = allCanaux.filter((c) => c.grande_tribbu_id === gtId);
+
+    const allRoles = readLocal<MembreRole[]>(
+      STORAGE_KEYS.ROLES,
+      DEMO_MEMBRES_ROLES
+    );
+    const membresRoles = allRoles.filter((r) => r.grande_tribbu_id === gtId);
+
     const customProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
-    const allProfiles = [...DEMO_PROFILES];
+    const mergedProfiles = [...DEMO_PROFILES];
     for (const cp of customProfiles) {
-      if (!allProfiles.some((p) => p.id === cp.id)) {
-        allProfiles.push(cp);
+      if (!mergedProfiles.some((p) => p.id === cp.id)) {
+        mergedProfiles.push(cp);
       }
     }
 
+    const memberUserIds = new Set<string>([activeGt.manitou_id]);
+    membresRoles.forEach((r) => {
+      if (r.user_id && r.status !== 'REJECTED') {
+        memberUserIds.add(r.user_id);
+      }
+    });
+
+    const isolatedProfiles = mergedProfiles.filter(
+      (p) =>
+        memberUserIds.has(p.id) || p.grande_tribbu_ids?.includes(gtId)
+    );
+
     return {
-      grandeTribbu: DEMO_GRANDE_TRIBBU,
-      tribbus: readLocal<Tribbu[]>(STORAGE_KEYS.TRIBBUS, DEMO_TRIBBUS),
-      tippis: readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS),
-      feuxDeCamp: readLocal<FeuDeCamp[]>(STORAGE_KEYS.FEUX, DEMO_FEUX_DE_CAMP),
-      canaux: readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX),
-      membresRoles: readLocal<MembreRole[]>(
-        STORAGE_KEYS.ROLES,
-        DEMO_MEMBRES_ROLES
-      ),
-      profiles: allProfiles,
+      grandeTribbu: activeGt,
+      allAssociations,
+      tribbus,
+      tippis,
+      feuxDeCamp,
+      canaux,
+      membresRoles,
+      profiles: isolatedProfiles,
     };
   },
 
   /**
-   * Récupère tous les messages depuis Cloud Firestore enrichis des auteurs, citations,
-   * mentions `<@nom_personne>` et émargements.
+   * Récupère uniquement les messages appartenant aux canaux de l'association active.
    */
-  async fetchMessages(canalId?: string): Promise<ChatMessage[]> {
-    const hierarchy = await this.fetchHierarchy();
+  async fetchMessages(
+    targetSlug?: string | null,
+    canalId?: string
+  ): Promise<ChatMessage[]> {
+    const hierarchy = await this.fetchHierarchy(targetSlug);
+    if (!hierarchy.grandeTribbu) return [];
+
+    const gtId = hierarchy.grandeTribbu.id;
+    const validCanalIds = new Set(hierarchy.canaux.map((c) => c.id));
     const profileMap = new Map(hierarchy.profiles.map((p) => [p.id, p]));
 
     if (isFirebaseConfigured && firestoreDb) {
@@ -201,17 +314,28 @@ export const chatService = {
             where('canal_id', '==', canalId),
             orderBy('created_at', 'asc')
           )
-        : query(msgCol, orderBy('created_at', 'asc'));
+        : query(
+            msgCol,
+            where('grande_tribbu_id', '==', gtId),
+            orderBy('created_at', 'asc')
+          );
 
       const [msgSnap, emargementSnap] = await Promise.all([
         getDocs(msgQuery),
-        getDocs(collection(firestoreDb, 'emargements')),
+        getDocs(
+          query(
+            collection(firestoreDb, 'emargements'),
+            where('grande_tribbu_id', '==', gtId)
+          )
+        ),
       ]);
 
-      const rawMessages = msgSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<ChatMessage, 'id' | 'emargements'>),
-      }));
+      const rawMessages = msgSnap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ChatMessage, 'id' | 'emargements'>),
+        }))
+        .filter((m) => validCanalIds.has(m.canal_id));
 
       const rawEmargements = emargementSnap.docs.map((d) => ({
         id: d.id,
@@ -258,9 +382,10 @@ export const chatService = {
       STORAGE_KEYS.MESSAGES,
       DEMO_MESSAGES
     );
-    const filtered = canalId
-      ? stored.filter((m) => m.canal_id === canalId)
-      : stored;
+    const filtered = stored.filter(
+      (m) =>
+        validCanalIds.has(m.canal_id) && (!canalId || m.canal_id === canalId)
+    );
 
     return filtered.map((m) => ({
       ...m,
@@ -273,13 +398,14 @@ export const chatService = {
   },
 
   /**
-   * Envoie un nouveau message dans un canal Firestore, en indexant automatiquement
-   * les personnes citées via `<@nom_personne>`.
+   * Envoie un nouveau message dans un canal de l'association active.
    */
   async sendMessage(params: {
+    grandeTribbuId: string;
     canalId: string;
     authorId: string;
     content: string;
+    profiles: Profile[];
     replyToMessageId?: string | null;
     replyToPreview?: {
       id: string;
@@ -290,9 +416,11 @@ export const chatService = {
     attachments?: MessageAttachment[];
   }): Promise<ChatMessage> {
     const {
+      grandeTribbuId,
       canalId,
       authorId,
       content,
+      profiles,
       replyToMessageId = null,
       replyToPreview = null,
       quotedExcerpt = null,
@@ -300,15 +428,15 @@ export const chatService = {
     } = params;
 
     const nowIso = new Date().toISOString();
-    const hierarchy = await this.fetchHierarchy();
     const { mentionedNames, mentionedUserIds } = extractMentionsFromContent(
       content,
-      hierarchy.profiles
+      profiles
     );
 
     const messageId = `msg-${crypto.randomUUID()}`;
     const newMessage: ChatMessage = {
       id: messageId,
+      grande_tribbu_id: grandeTribbuId,
       canal_id: canalId,
       author_id: authorId,
       content,
@@ -326,6 +454,7 @@ export const chatService = {
     if (isFirebaseConfigured && firestoreDb) {
       await setDoc(doc(firestoreDb, 'messages', messageId), {
         id: messageId,
+        grande_tribbu_id: grandeTribbuId,
         canal_id: canalId,
         author_id: authorId,
         content,
@@ -367,15 +496,20 @@ export const chatService = {
   },
 
   /**
-   * Valide la lecture (Émargement / Read receipt) d'un message d'annonce officielle dans Firestore.
+   * Valide la lecture (Émargement) d'une annonce officielle.
    */
-  async confirmEmargement(messageId: string, userId: string): Promise<void> {
+  async confirmEmargement(
+    grandeTribbuId: string,
+    messageId: string,
+    userId: string
+  ): Promise<void> {
     const nowIso = new Date().toISOString();
 
     if (isFirebaseConfigured && firestoreDb) {
       const emId = `${messageId}_${userId}`;
       await setDoc(doc(firestoreDb, 'emargements', emId), {
         id: emId,
+        grande_tribbu_id: grandeTribbuId,
         message_id: messageId,
         user_id: userId,
         confirmed_at: nowIso,
@@ -400,6 +534,7 @@ export const chatService = {
           ...msg.emargements,
           {
             id: `em-${crypto.randomUUID().slice(0, 8)}`,
+            grande_tribbu_id: grandeTribbuId,
             message_id: messageId,
             user_id: userId,
             confirmed_at: nowIso,
@@ -413,9 +548,10 @@ export const chatService = {
   },
 
   /**
-   * Crée une nouvelle Tribbu (Commission/Groupe) avec ses canaux Annonces et Agora dans Firestore.
+   * Crée une nouvelle Tribbu rattachée à l'association active (`grandeTribbuId`).
    */
   async createTribbu(params: {
+    grandeTribbuId: string;
     name: string;
     description: string;
     color: string;
@@ -426,7 +562,7 @@ export const chatService = {
 
     const newTribbu: Tribbu = {
       id: tribbuId,
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       name: params.name,
       description: params.description,
       color: params.color,
@@ -440,7 +576,7 @@ export const chatService = {
       type: 'TRIBBU_ANNONCES',
       name: `${params.name} — Annonces`,
       description: `Annonces des Chef(fe)s de la Tribbu ${params.name}`,
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: tribbuId,
       tippi_id: null,
       feu_de_camp_id: null,
@@ -453,7 +589,7 @@ export const chatService = {
       type: 'TRIBBU_AGORA',
       name: `${params.name} — Agora`,
       description: `Agora générale de la Tribbu ${params.name}`,
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: tribbuId,
       tippi_id: null,
       feu_de_camp_id: null,
@@ -484,9 +620,10 @@ export const chatService = {
   },
 
   /**
-   * Crée un nouveau Tippi rattaché à une Tribbu ainsi que son canal dédié dans Firestore.
+   * Crée un nouveau Tippi rattaché à une Tribbu de l'association active.
    */
   async createTippi(params: {
+    grandeTribbuId: string;
     tribbuId: string;
     name: string;
     description: string;
@@ -501,6 +638,7 @@ export const chatService = {
 
     const newTippi: Tippi = {
       id: tippiId,
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: params.tribbuId,
       name: params.name,
       description: params.description,
@@ -514,7 +652,7 @@ export const chatService = {
       type: 'TIPPI',
       name: params.name,
       description: params.description || 'Sous-groupe Tippi',
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: params.tribbuId,
       tippi_id: tippiId,
       feu_de_camp_id: null,
@@ -544,9 +682,10 @@ export const chatService = {
   },
 
   /**
-   * Crée un nouveau Feu de camp dans Firestore (accessible à tout niveau par tout membre).
+   * Crée un nouveau Feu de camp dans l'association active.
    */
   async createFeuDeCamp(params: {
+    grandeTribbuId: string;
     tribbuId: string | null;
     name: string;
     topic: string;
@@ -561,7 +700,7 @@ export const chatService = {
 
     const newFeu: FeuDeCamp = {
       id: fdcId,
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: params.tribbuId,
       name: params.name,
       topic: params.topic,
@@ -575,7 +714,7 @@ export const chatService = {
       type: 'FEU_DE_CAMP',
       name: params.name,
       description: params.topic || 'Feu de camp privé',
-      grande_tribbu_id: 'gt-main',
+      grande_tribbu_id: params.grandeTribbuId,
       tribbu_id: params.tribbuId,
       tippi_id: null,
       feu_de_camp_id: fdcId,
@@ -605,9 +744,12 @@ export const chatService = {
   },
 
   /**
-   * Génère une invitation par e-mail avec token unique rattachée à une Tribbu dans Firestore.
+   * Génère une invitation par e-mail avec token unique ET le slug d'URL de l'association :
+   * `https://.../<slug>?invite_token=...&email=...&tribbu_id=...`
    */
   async createInvitation(params: {
+    grandeTribbuId: string;
+    grandeTribbuSlug: string;
     email: string;
     tribbuId: string;
     role: TribbuRole;
@@ -621,7 +763,7 @@ export const chatService = {
         ? window.location.origin
         : 'http://localhost:5173');
 
-    const invitationUrl = `${baseUrl}/?invite_token=${encodeURIComponent(
+    const invitationUrl = `${baseUrl}/${params.grandeTribbuSlug}?invite_token=${encodeURIComponent(
       token
     )}&email=${encodeURIComponent(params.email)}&tribbu_id=${encodeURIComponent(
       params.tribbuId
@@ -633,8 +775,8 @@ export const chatService = {
       user_id: null,
       invited_email: params.email,
       role: params.role,
-      grande_tribbu_id: 'gt-main',
-      tribbu_id: params.tribbuId,
+      grande_tribbu_id: params.grandeTribbuId,
+      tribbu_id: params.tribbuId || null,
       status: 'INVITED',
       invitation_token: token,
       invited_by: params.invitedBy,
@@ -660,7 +802,7 @@ export const chatService = {
   },
 
   /**
-   * Met à jour le rôle (MANITOU, CHEF, PYGMEE) ou le statut d'un membre dans Firestore.
+   * Met à jour le rôle d'un membre dans l'association.
    */
   async updateMemberRole(params: {
     roleRecordId: string;
@@ -694,9 +836,10 @@ export const chatService = {
   },
 
   /**
-   * Ajoute un membre existant à une Tribbu avec un rôle défini dans Firestore.
+   * Ajoute un membre existant à une Tribbu de l'association.
    */
   async assignMemberToTribbu(params: {
+    grandeTribbuId: string;
     userId: string;
     tribbuId: string;
     role: TribbuRole;
@@ -713,7 +856,7 @@ export const chatService = {
           user_id: params.userId,
           invited_email: null,
           role: params.role,
-          grande_tribbu_id: 'gt-main',
+          grande_tribbu_id: params.grandeTribbuId,
           tribbu_id: params.tribbuId,
           status: 'ACTIVE',
           invitation_token: null,
@@ -725,6 +868,7 @@ export const chatService = {
       );
       await authService.syncUserTribbuClaimsInFirestore(
         params.userId,
+        params.grandeTribbuId,
         params.tribbuId,
         params.role
       );
@@ -744,7 +888,7 @@ export const chatService = {
         user_id: params.userId,
         invited_email: null,
         role: params.role,
-        grande_tribbu_id: 'gt-main',
+        grande_tribbu_id: params.grandeTribbuId,
         tribbu_id: params.tribbuId,
         status: 'ACTIVE',
         invitation_token: null,

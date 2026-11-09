@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Compass, Crown, UserPlus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUIStore } from '@/lib/uiStore';
 import {
@@ -26,12 +27,21 @@ import { RoleManager } from '@/components/modals/RoleManager';
 import { AuthScreen } from '@/components/modals/AuthScreen';
 
 export const App: React.FC = () => {
-  const { user, globalRole, isLoading: authLoading, pendingInvitation } =
-    useAuth();
-  const { activeCanalId, setActiveCanalId, mobileView } = useUIStore();
+  const {
+    user,
+    globalRole,
+    activeSlug,
+    activeAssociation,
+    isMemberOfActiveAssociation,
+    isLoading: authLoading,
+    pendingInvitation,
+  } = useAuth();
+  const { activeCanalId, setActiveCanalId, mobileView, openModal } =
+    useUIStore();
 
-  const { data: hierarchy, isLoading: hierarchyLoading } = useHierarchy();
-  const { data: allMessages = [] } = useAllMessages();
+  const { data: hierarchy, isLoading: hierarchyLoading } =
+    useHierarchy(activeSlug);
+  const { data: allMessages = [] } = useAllMessages(activeSlug);
 
   useRealtimeChannel(activeCanalId);
 
@@ -41,7 +51,7 @@ export const App: React.FC = () => {
   const feuxDeCamp = hierarchy?.feuxDeCamp ?? [];
   const membresRoles = hierarchy?.membresRoles ?? [];
   const profiles = hierarchy?.profiles ?? [];
-  const grandeTribbu = hierarchy?.grandeTribbu;
+  const grandeTribbu = hierarchy?.grandeTribbu || activeAssociation;
 
   const {
     accessibleCanaux,
@@ -62,7 +72,7 @@ export const App: React.FC = () => {
     activeCanalId,
   });
 
-  // Assure que le canal actif fait toujours partie des canaux accessibles par le rôle courant
+  // Assure que le canal actif fait toujours partie des canaux accessibles par le rôle courant dans l'association active
   useEffect(() => {
     if (accessibleCanaux.length === 0) return;
     const isCurrentValid = accessibleCanaux.some(
@@ -96,9 +106,13 @@ export const App: React.FC = () => {
     createInvitation,
     updateMemberRole,
     assignMember,
-  } = useChatActions(activeCanal?.id || null);
+  } = useChatActions(
+    activeSlug,
+    grandeTribbu?.id || null,
+    activeCanal?.id || null
+  );
 
-  if (authLoading || hierarchyLoading) {
+  if (authLoading || (Boolean(activeSlug) && hierarchyLoading)) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-tribbu-charcoal-deep text-white gap-3">
         <div className="w-10 h-10 rounded-full border-3 border-tribbu-teal border-t-tribbu-green animate-spin" />
@@ -109,7 +123,14 @@ export const App: React.FC = () => {
     );
   }
 
-  if (!user || pendingInvitation) {
+  // Affiche la page initiale SaaS si non connecté, invitation en attente,
+  // aucune association sélectionnée, ou cloisonnement inter-associations actif
+  if (
+    !user ||
+    pendingInvitation ||
+    !grandeTribbu ||
+    !isMemberOfActiveAssociation
+  ) {
     return <AuthScreen />;
   }
 
@@ -130,9 +151,10 @@ export const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-tribbu-ivory dark:bg-tribbu-charcoal-deep">
-      {/* Barre supérieure globale */}
+      {/* Barre supérieure globale avec slug d'URL de l'association */}
       <Header
-        associationName={grandeTribbu?.name || 'La Grande Tribbu'}
+        associationName={grandeTribbu.name}
+        associationSlug={grandeTribbu.slug}
         totalUnreadCount={totalUnreadCount}
         mutatedChannelsCount={mutatedCanauxList.length}
         mentionsCount={mentionedMessages.length}
@@ -182,6 +204,49 @@ export const App: React.FC = () => {
           {/* Système d'onglets persistants façon navigateur */}
           <TabBar summariesByCanalId={summariesByCanalId} />
 
+          {/* Bandeau d'onboarding Grand Manitou lorsqu'une nouvelle association vient d'être créée */}
+          {globalRole === 'MANITOU' && tribbus.length === 0 && (
+            <div className="mx-3 mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-tribbu-teal/15 via-tribbu-green/10 to-tribbu-purple/10 border border-tribbu-teal/30 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-tribbu-teal text-white flex items-center justify-center shrink-0">
+                  <Crown className="w-4 h-4" />
+                </div>
+                <div className="text-xs">
+                  <div className="font-bold text-slate-900 dark:text-white">
+                    Bienvenue dans votre association « {grandeTribbu.name} » (
+                    <code className="font-mono text-tribbu-teal">
+                      /{grandeTribbu.slug}
+                    </code>
+                    ) !
+                  </div>
+                  <div className="text-slate-600 dark:text-slate-300">
+                    Vous êtes le Grand Manitou. Créez vos premières Tribbus et
+                    invitez vos membres par adresse e-mail.
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openModal('create-tribbu')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-tribbu-teal text-white text-xs font-bold shadow-sm hover:bg-tribbu-teal-dark transition-colors"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>+ Créer une Tribbu</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openModal('invite')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-tribbu-green text-white text-xs font-bold shadow-sm hover:opacity-95 transition-colors"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>+ Inviter des membres</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeCanal ? (
             <>
               {/* En-tête du canal actif (Utilisateurs en focus + Indicateur d'écriture) */}
@@ -197,7 +262,7 @@ export const App: React.FC = () => {
                 messages={activeCanalMessages}
                 currentUser={user}
                 userRoles={membresRoles}
-                manitouId={grandeTribbu?.manitou_id || 'user-manitou'}
+                manitouId={grandeTribbu.manitou_id}
                 onConfirmEmargement={(messageId) =>
                   confirmEmargement({ messageId, userId: user.id })
                 }
@@ -230,6 +295,7 @@ export const App: React.FC = () => {
                     quotedExcerpt,
                     attachments,
                     canalName: activeCanal.name,
+                    profiles,
                   });
                 }}
                 onTypingChange={notifyTyping}

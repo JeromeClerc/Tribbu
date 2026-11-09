@@ -9,14 +9,19 @@ export interface Profile {
   avatar_url: string | null;
   phone_number: string | null;
   sms_notifications_enabled?: boolean;
+  grande_tribbu_ids?: string[];
   last_seen_at: string;
   created_at: string;
 }
 
 export interface GrandeTribbu {
   id: string;
+  slug: string;
   name: string;
   description: string | null;
+  address: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
   logo_url: string | null;
   manitou_id: string;
   settings: {
@@ -40,6 +45,7 @@ export interface Tribbu {
 
 export interface Tippi {
   id: string;
+  grande_tribbu_id?: string;
   tribbu_id: string;
   name: string;
   description: string | null;
@@ -98,6 +104,7 @@ export interface MessageAttachment {
 
 export interface Emargement {
   id: string;
+  grande_tribbu_id?: string;
   message_id: string;
   user_id: string;
   confirmed_at: string;
@@ -106,6 +113,7 @@ export interface Emargement {
 
 export interface ChatMessage {
   id: string;
+  grande_tribbu_id?: string;
   canal_id: string;
   author_id: string;
   author?: Profile;
@@ -127,6 +135,7 @@ export interface ChatMessage {
 
 export interface OpenTab {
   canalId: string;
+  grandeTribbuId?: string;
   title: string;
   type: CanalType;
   parentLabel?: string;
@@ -136,6 +145,7 @@ export interface OpenTab {
 
 export interface PresenceUser {
   userId: string;
+  grandeTribbuId?: string;
   displayName: string;
   avatarUrl: string | null;
   role: TribbuRole;

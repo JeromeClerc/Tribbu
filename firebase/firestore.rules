@@ -2,7 +2,8 @@ rules_version = '2';
 
 // ============================================================================
 // TRIBBU — RÈGLES DE SÉCURITÉ CLOUD FIRESTORE (firestore.rules)
-// Hiérarchie : Grande Tribbu > Tribbu (Commission) > Tippi > Feu de camp
+// Architecture SaaS Multi-Associations (Isolation stricte par grande_tribbu_id)
+// Hiérarchie : Grande Tribbu (Association) > Tribbu (Commission) > Tippi > Feu de camp
 // Rôles : MANITOU, CHEF, PYGMEE
 // ============================================================================
 
@@ -10,7 +11,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ------------------------------------------------------------------------
-    // FONCTIONS UTILITAIRES D'AUTHENTIFICATION ET DE RÔLES
+    // FONCTIONS UTILITAIRES D'AUTHENTIFICATION ET D'ISOLATION MULTI-ASSOCIATIONS
     // ------------------------------------------------------------------------
 
     function isSignedIn() {
@@ -21,159 +22,186 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
-    // Le profil utilisateur contient optionnellement `global_role` ('MANITOU' | 'CHEF' | 'PYGMEE')
-    // et `tribbu_ids` (liste des Tribbus dont il est membre actif) ainsi que `chef_tribbu_ids`.
     function getUserProfile() {
       return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
     }
 
-    function isManitou() {
-      return isSignedIn() && (
-        getUserProfile().global_role == 'MANITOU' ||
-        exists(/databases/$(database)/documents/grande_tribbu/gt-main) &&
-        get(/databases/$(database)/documents/grande_tribbu/gt-main).data.manitou_id == currentUserId()
+    // Vérifie si l'utilisateur est le Grand Manitou d'une association spécifique
+    function isManitouOfGrandeTribbu(gtId) {
+      return isSignedIn() &&
+        gtId != null &&
+        exists(/databases/$(database)/documents/grande_tribbu/$(gtId)) &&
+        get(/databases/$(database)/documents/grande_tribbu/$(gtId)).data.manitou_id == currentUserId();
+    }
+
+    // Vérifie si l'utilisateur est membre actif d'une association (Grande Tribbu) spécifique
+    function isMemberOfGrandeTribbu(gtId) {
+      return isManitouOfGrandeTribbu(gtId) || (
+        isSignedIn() &&
+        gtId != null &&
+        getUserProfile().grande_tribbu_ids != null &&
+        gtId in getUserProfile().grande_tribbu_ids
       );
     }
 
-    function isAnyChefOrManitou() {
-      return isManitou() || (
-        isSignedIn() && (
+    function isChefOfTribbu(gtId, tribbuId) {
+      return isManitouOfGrandeTribbu(gtId) || (
+        isMemberOfGrandeTribbu(gtId) &&
+        getUserProfile().chef_tribbu_ids != null &&
+        tribbuId in getUserProfile().chef_tribbu_ids
+      );
+    }
+
+    function isAnyChefOrManitouOfGrandeTribbu(gtId) {
+      return isManitouOfGrandeTribbu(gtId) || (
+        isMemberOfGrandeTribbu(gtId) && (
           getUserProfile().global_role == 'CHEF' ||
           (getUserProfile().chef_tribbu_ids != null && getUserProfile().chef_tribbu_ids.size() > 0)
         )
       );
     }
 
-    function isChefOfTribbu(tribbuId) {
-      return isManitou() || (
-        isSignedIn() &&
-        getUserProfile().chef_tribbu_ids != null &&
-        tribbuId in getUserProfile().chef_tribbu_ids
-      );
-    }
-
-    function isMemberOfTribbu(tribbuId) {
-      return isManitou() || isChefOfTribbu(tribbuId) || (
-        isSignedIn() &&
-        getUserProfile().tribbu_ids != null &&
-        tribbuId in getUserProfile().tribbu_ids
-      );
+    function isMemberOfTribbu(gtId, tribbuId) {
+      return isManitouOfGrandeTribbu(gtId) ||
+        isChefOfTribbu(gtId, tribbuId) || (
+          isMemberOfGrandeTribbu(gtId) &&
+          getUserProfile().tribbu_ids != null &&
+          tribbuId in getUserProfile().tribbu_ids
+        );
     }
 
     function isMemberOfTippi(tippiId) {
       let tippi = get(/databases/$(database)/documents/tippis/$(tippiId)).data;
-      return isManitou() ||
-        isChefOfTribbu(tippi.tribbu_id) ||
-        (isSignedIn() && tippi.member_ids != null && currentUserId() in tippi.member_ids);
+      return isManitouOfGrandeTribbu(tippi.grande_tribbu_id) ||
+        isChefOfTribbu(tippi.grande_tribbu_id, tippi.tribbu_id) ||
+        (isMemberOfGrandeTribbu(tippi.grande_tribbu_id) &&
+          tippi.member_ids != null &&
+          currentUserId() in tippi.member_ids);
     }
 
     function isParticipantOfFeuDeCamp(feuId) {
       let feu = get(/databases/$(database)/documents/feux_de_camp/$(feuId)).data;
-      return isManitou() ||
+      return isManitouOfGrandeTribbu(feu.grande_tribbu_id) ||
         feu.created_by == currentUserId() ||
-        (feu.tribbu_id != null && isChefOfTribbu(feu.tribbu_id)) ||
-        (isSignedIn() && feu.participant_ids != null && currentUserId() in feu.participant_ids);
+        (feu.tribbu_id != null && isChefOfTribbu(feu.grande_tribbu_id, feu.tribbu_id)) ||
+        (isMemberOfGrandeTribbu(feu.grande_tribbu_id) &&
+          feu.participant_ids != null &&
+          currentUserId() in feu.participant_ids);
     }
 
-    // Vérifie si l'utilisateur a le droit de LIRE un canal
+    // Vérifie si l'utilisateur a le droit de LIRE un canal (avec isolation stricte par association)
     function canReadCanal(canalId) {
       let canal = get(/databases/$(database)/documents/canaux/$(canalId)).data;
-      return isManitou() || (
-        isSignedIn() && (
+      let gtId = canal.grande_tribbu_id;
+      return isManitouOfGrandeTribbu(gtId) || (
+        isMemberOfGrandeTribbu(gtId) && (
           canal.type == 'GRANDE_TRIBBU_ANNONCES' ||
           canal.type == 'AGORA_GENERALE' ||
-          ((canal.type == 'TRIBBU_ANNONCES' || canal.type == 'TRIBBU_AGORA') && isMemberOfTribbu(canal.tribbu_id)) ||
+          ((canal.type == 'TRIBBU_ANNONCES' || canal.type == 'TRIBBU_AGORA') && isMemberOfTribbu(gtId, canal.tribbu_id)) ||
           (canal.type == 'TIPPI' && isMemberOfTippi(canal.tippi_id)) ||
           (canal.type == 'FEU_DE_CAMP' && isParticipantOfFeuDeCamp(canal.feu_de_camp_id))
         )
       );
     }
 
-    // Vérifie si l'utilisateur a le droit d'ÉCRIRE (poster un message) dans un canal
+    // Vérifie si l'utilisateur a le droit d'ÉCRIRE dans un canal
     function canWriteCanal(canalId) {
       let canal = get(/databases/$(database)/documents/canaux/$(canalId)).data;
-      return isManitou() || (
-        isSignedIn() && (
-          // Seuls le Grand Manitou et les Chefs peuvent écrire dans GRANDE_TRIBBU_ANNONCES
-          (canal.type == 'GRANDE_TRIBBU_ANNONCES' && isAnyChefOrManitou()) ||
-          // Agora Générale ouverte à tous les membres connectés
+      let gtId = canal.grande_tribbu_id;
+      return isManitouOfGrandeTribbu(gtId) || (
+        isMemberOfGrandeTribbu(gtId) && (
+          (canal.type == 'GRANDE_TRIBBU_ANNONCES' && isAnyChefOrManitouOfGrandeTribbu(gtId)) ||
           (canal.type == 'AGORA_GENERALE') ||
-          // Annonces de Tribbu réservées aux Chefs de cette Tribbu (et Manitou)
-          (canal.type == 'TRIBBU_ANNONCES' && isChefOfTribbu(canal.tribbu_id)) ||
-          // Agora de Tribbu ouverte aux membres vérifiés de la Tribbu
-          (canal.type == 'TRIBBU_AGORA' && isMemberOfTribbu(canal.tribbu_id)) ||
-          // Tippi ouvert aux membres vérifiés du Tippi
+          (canal.type == 'TRIBBU_ANNONCES' && isChefOfTribbu(gtId, canal.tribbu_id)) ||
+          (canal.type == 'TRIBBU_AGORA' && isMemberOfTribbu(gtId, canal.tribbu_id)) ||
           (canal.type == 'TIPPI' && isMemberOfTippi(canal.tippi_id)) ||
-          // Feu de camp ouvert aux participants
           (canal.type == 'FEU_DE_CAMP' && isParticipantOfFeuDeCamp(canal.feu_de_camp_id))
         )
       );
     }
 
     // ------------------------------------------------------------------------
-    // RÈGLES PAR COLLECTION
+    // RÈGLES PAR COLLECTION (ISOLATION MULTI-TENANT)
     // ------------------------------------------------------------------------
 
     // 1. PROFILES
     match /profiles/{userId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && currentUserId() == userId;
-      allow update: if isSignedIn() && (currentUserId() == userId || isManitou());
-      allow delete: if isManitou();
+      allow update: if isSignedIn() && currentUserId() == userId;
+      allow delete: if false;
     }
 
-    // 2. GRANDE_TRIBBU
+    // 2. GRANDE_TRIBBU (Associations du SaaS)
+    // Lecture du slug/nom autorisée pour permettre l'affichage du portail de connexion par URL `/<slug>`
     match /grande_tribbu/{gtId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isManitou();
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.manitou_id == currentUserId();
+      allow update, delete: if isManitouOfGrandeTribbu(gtId);
     }
 
-    // 3. TRIBBUS (Les Pygmées n'accèdent qu'aux Tribbus dont ils sont membres vérifiés)
+    // 3. TRIBBUS (Isolées par grande_tribbu_id et membres vérifiés)
     match /tribbus/{tribbuId} {
-      allow read: if isMemberOfTribbu(tribbuId);
-      allow create, delete: if isManitou();
-      allow update: if isChefOfTribbu(tribbuId);
+      allow read: if isMemberOfTribbu(resource.data.grande_tribbu_id, tribbuId);
+      allow create: if isManitouOfGrandeTribbu(request.resource.data.grande_tribbu_id);
+      allow update: if isChefOfTribbu(resource.data.grande_tribbu_id, tribbuId);
+      allow delete: if isManitouOfGrandeTribbu(resource.data.grande_tribbu_id);
     }
 
-    // 4. TIPPIS (Les Pygmées n'accèdent qu'aux Tippis dont ils sont membres vérifiés)
+    // 4. TIPPIS (Isolés par grande_tribbu_id et membres vérifiés du Tippi)
     match /tippis/{tippiId} {
-      allow read: if isManitou() ||
-        isChefOfTribbu(resource.data.tribbu_id) ||
-        (isSignedIn() && currentUserId() in resource.data.member_ids);
-      allow create: if isChefOfTribbu(request.resource.data.tribbu_id);
-      allow update, delete: if isChefOfTribbu(resource.data.tribbu_id);
+      allow read: if isManitouOfGrandeTribbu(resource.data.grande_tribbu_id) ||
+        isChefOfTribbu(resource.data.grande_tribbu_id, resource.data.tribbu_id) ||
+        (isMemberOfGrandeTribbu(resource.data.grande_tribbu_id) &&
+          currentUserId() in resource.data.member_ids);
+      allow create: if isChefOfTribbu(
+        request.resource.data.grande_tribbu_id,
+        request.resource.data.tribbu_id
+      );
+      allow update, delete: if isChefOfTribbu(
+        resource.data.grande_tribbu_id,
+        resource.data.tribbu_id
+      );
     }
 
-    // 5. FEUX_DE_CAMP (Visibles uniquement par leurs participants + Manitou / Chef)
+    // 5. FEUX_DE_CAMP (Isolés par grande_tribbu_id et participants)
     match /feux_de_camp/{feuId} {
-      allow read: if isManitou() ||
+      allow read: if isManitouOfGrandeTribbu(resource.data.grande_tribbu_id) ||
         resource.data.created_by == currentUserId() ||
-        (resource.data.tribbu_id != null && isChefOfTribbu(resource.data.tribbu_id)) ||
-        (isSignedIn() && currentUserId() in resource.data.participant_ids);
-      allow create: if isSignedIn() && request.resource.data.created_by == currentUserId();
-      allow update, delete: if isManitou() ||
+        (resource.data.tribbu_id != null &&
+          isChefOfTribbu(resource.data.grande_tribbu_id, resource.data.tribbu_id)) ||
+        (isMemberOfGrandeTribbu(resource.data.grande_tribbu_id) &&
+          currentUserId() in resource.data.participant_ids);
+      allow create: if isMemberOfGrandeTribbu(request.resource.data.grande_tribbu_id) &&
+        request.resource.data.created_by == currentUserId();
+      allow update, delete: if isManitouOfGrandeTribbu(resource.data.grande_tribbu_id) ||
         resource.data.created_by == currentUserId() ||
-        (resource.data.tribbu_id != null && isChefOfTribbu(resource.data.tribbu_id));
+        (resource.data.tribbu_id != null &&
+          isChefOfTribbu(resource.data.grande_tribbu_id, resource.data.tribbu_id));
     }
 
     // 6. CANAUX
     match /canaux/{canalId} {
       allow read: if canReadCanal(canalId);
-      allow create: if isAnyChefOrManitou() || request.resource.data.type == 'FEU_DE_CAMP';
+      allow create: if isAnyChefOrManitouOfGrandeTribbu(request.resource.data.grande_tribbu_id) ||
+        (isMemberOfGrandeTribbu(request.resource.data.grande_tribbu_id) &&
+          request.resource.data.type == 'FEU_DE_CAMP');
       allow update: if canReadCanal(canalId);
-      allow delete: if isManitou();
+      allow delete: if isManitouOfGrandeTribbu(resource.data.grande_tribbu_id);
     }
 
-    // 7. MEMBRES_ROLES (Rôles & Invitations par token)
+    // 7. MEMBRES_ROLES (Isolés par grande_tribbu_id)
     match /membres_roles/{roleId} {
-      allow read: if isSignedIn();
-      allow create: if isAnyChefOrManitou();
-      allow update: if isAnyChefOrManitou() ||
+      allow read: if isMemberOfGrandeTribbu(resource.data.grande_tribbu_id) ||
+        (isSignedIn() && resource.data.user_id == currentUserId()) ||
+        resource.data.status == 'INVITED';
+      allow create: if isAnyChefOrManitouOfGrandeTribbu(request.resource.data.grande_tribbu_id);
+      allow update: if isAnyChefOrManitouOfGrandeTribbu(resource.data.grande_tribbu_id) ||
         (isSignedIn() && resource.data.status == 'INVITED');
-      allow delete: if isAnyChefOrManitou();
+      allow delete: if isAnyChefOrManitouOfGrandeTribbu(resource.data.grande_tribbu_id);
     }
 
-    // 8. MESSAGES (Stockés dans Firestore avec mentions <@nom_personne>, citations et pièces jointes)
+    // 8. MESSAGES (Isolés par canal_id et grande_tribbu_id)
     match /messages/{messageId} {
       allow read: if canReadCanal(resource.data.canal_id);
       allow create: if isSignedIn() &&
@@ -181,36 +209,33 @@ service cloud.firestore {
         canWriteCanal(request.resource.data.canal_id);
       allow update: if isSignedIn() && (
         resource.data.author_id == currentUserId() ||
-        isManitou() ||
-        // Autorise l'ajout d'un émargement de lecture par un membre ayant accès au canal
+        isManitouOfGrandeTribbu(resource.data.grande_tribbu_id) ||
         canReadCanal(resource.data.canal_id)
       );
       allow delete: if isSignedIn() && (
         resource.data.author_id == currentUserId() ||
-        isManitou()
+        isManitouOfGrandeTribbu(resource.data.grande_tribbu_id)
       );
     }
 
-    // 9. EMARGEMENTS (Read receipts pour les annonces descendantes de la Grande Tribbu)
+    // 9. EMARGEMENTS
     match /emargements/{emargementId} {
-      allow read: if isSignedIn();
+      allow read: if isMemberOfGrandeTribbu(resource.data.grande_tribbu_id);
       allow create, update: if isSignedIn() &&
         request.resource.data.user_id == currentUserId();
-      allow delete: if isManitou();
     }
 
-    // 10. CANAL_LECTURES (Suivi des messages non-lus par utilisateur)
+    // 10. CANAL_LECTURES
     match /canal_lectures/{lectureId} {
       allow read, write: if isSignedIn() &&
         (resource == null || resource.data.user_id == currentUserId()) &&
         request.resource.data.user_id == currentUserId();
     }
 
-    // 11. PRESENCE (Présence en direct : qui a le canal en focus & qui est en train d'écrire)
+    // 11. PRESENCE
     match /presence/{userId} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && currentUserId() == userId;
     }
   }
 }
-

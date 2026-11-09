@@ -42,9 +42,11 @@ VITE_APP_URL=http://localhost:5173
    - `localhost` est déjà présent par défaut.
    - Lorsque vous déploierez sur Vercel, ajoutez votre domaine `votre-app.vercel.app`.
 
-### Fonctionnement du Login et des Invitations dans Tribbu :
-- **Créateurs / Membres existants :** Connexion directe via `signInWithEmailAndPassword` avec leur paire e-mail / mot de passe.
-- **Nouveaux membres invités :** Le Grand Manitou ou un(e) Chef(fe) de Tribbu génère une URL d'invitation (`/?invite_token=...&email=...&tribbu_id=...`). En cliquant sur ce lien, l'invité saisit son mot de passe **2 fois**, ce qui crée son compte Firebase Auth (`createUserWithEmailAndPassword`), génère son profil dans `profiles/{uid}` et valide automatiquement son affiliation dans `membres_roles`.
+### Fonctionnement SaaS Multi-Associations, Création Initiale et Invitations :
+- **Création initiale d'une nouvelle association (1er membre) :** Lorsqu'une nouvelle association arrive sur Tribbu, aucune donnée la concernant n'existe encore. Depuis la page initiale SaaS (`/`), le 1er membre crée son compte (`email` / `password`) et son association (**seul le nom est obligatoire** ; descriptif, adresse postale, téléphone général et e-mail général sont optionnels). Il en devient automatiquement le **Grand Manitou** et obtient une URL dédiée `/<slug>` (tout en minuscule, sans accents ni espaces, ex. `/les-eclaireurs-des-alpes`).
+- **Cloisonnement strict Multi-Associations :** Chaque entité (`grande_tribbu`, `tribbus`, `tippis`, `feux_de_camp`, `canaux`, `membres_roles`, `messages`) porte `grande_tribbu_id`. Les règles Firestore (`isMemberOfGrandeTribbu(gtId)` et `isManitouOfGrandeTribbu(gtId)`) garantissent que les membres d'une association ne peuvent jamais voir ni interagir avec les Tribbus, Tippis ou membres d'une autre association.
+- **Membres existants :** Connexion directe sur `/<slug>` via `signInWithEmailAndPassword` avec leur paire e-mail / mot de passe.
+- **Nouveaux membres invités :** Le Grand Manitou ou un(e) Chef(fe) de Tribbu génère une URL d'invitation incluant le slug de l'association (`/<slug>?invite_token=...&email=...&tribbu_id=...`). En cliquant sur ce lien, l'invité saisit son mot de passe **2 fois**, ce qui crée son compte Firebase Auth (`createUserWithEmailAndPassword`), génère son profil dans `profiles/{uid}` et valide automatiquement son affiliation dans `membres_roles`.
 
 ---
 

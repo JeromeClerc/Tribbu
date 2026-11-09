@@ -1,55 +1,63 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { chatService } from '@/services/chatService';
 import { notificationService } from '@/services/notificationService';
-import type { MessageAttachment, TribbuRole } from '@/types/tribbu.types';
+import type {
+  MessageAttachment,
+  Profile,
+  TribbuRole,
+} from '@/types/tribbu.types';
 
 export const QUERY_KEYS = {
-  hierarchy: ['tribbu', 'hierarchy'] as const,
-  allMessages: ['tribbu', 'messages', 'all'] as const,
-  canalMessages: (canalId: string | null) =>
-    ['tribbu', 'messages', canalId] as const,
+  hierarchy: (slug?: string | null) =>
+    ['tribbu', 'hierarchy', slug || 'default'] as const,
+  allMessages: (slug?: string | null) =>
+    ['tribbu', 'messages', 'all', slug || 'default'] as const,
+  canalMessages: (slug?: string | null, canalId?: string | null) =>
+    ['tribbu', 'messages', slug || 'default', canalId] as const,
 };
 
-export function useHierarchy() {
+export function useHierarchy(activeSlug: string | null) {
   return useQuery({
-    queryKey: QUERY_KEYS.hierarchy,
-    queryFn: () => chatService.fetchHierarchy(),
+    queryKey: QUERY_KEYS.hierarchy(activeSlug),
+    queryFn: () => chatService.fetchHierarchy(activeSlug),
     staleTime: 10_000,
   });
 }
 
-export function useAllMessages() {
+export function useAllMessages(activeSlug: string | null) {
   return useQuery({
-    queryKey: QUERY_KEYS.allMessages,
-    queryFn: () => chatService.fetchMessages(),
+    queryKey: QUERY_KEYS.allMessages(activeSlug),
+    queryFn: () => chatService.fetchMessages(activeSlug),
     staleTime: 5_000,
   });
 }
 
-export function useCanalMessages(canalId: string | null) {
+export function useCanalMessages(
+  activeSlug: string | null,
+  canalId: string | null
+) {
   return useQuery({
-    queryKey: QUERY_KEYS.canalMessages(canalId),
+    queryKey: QUERY_KEYS.canalMessages(activeSlug, canalId),
     queryFn: () =>
-      canalId ? chatService.fetchMessages(canalId) : Promise.resolve([]),
+      canalId
+        ? chatService.fetchMessages(activeSlug, canalId)
+        : Promise.resolve([]),
     enabled: Boolean(canalId),
     staleTime: 3_000,
   });
 }
 
-export function useChatActions(activeCanalId: string | null) {
+export function useChatActions(
+  activeSlug: string | null,
+  activeGrandeTribbuId: string | null,
+  activeCanalId: string | null
+) {
   const queryClient = useQueryClient();
 
   const invalidateAll = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.hierarchy }),
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.allMessages }),
-      ...(activeCanalId
-        ? [
-            queryClient.invalidateQueries({
-              queryKey: QUERY_KEYS.canalMessages(activeCanalId),
-            }),
-          ]
-        : []),
+      queryClient.invalidateQueries({ queryKey: ['tribbu', 'hierarchy'] }),
+      queryClient.invalidateQueries({ queryKey: ['tribbu', 'messages'] }),
     ]);
   };
 
@@ -58,6 +66,7 @@ export function useChatActions(activeCanalId: string | null) {
       canalId: string;
       authorId: string;
       content: string;
+      profiles: Profile[];
       replyToMessageId?: string | null;
       replyToPreview?: {
         id: string;
@@ -67,7 +76,11 @@ export function useChatActions(activeCanalId: string | null) {
       quotedExcerpt?: string | null;
       attachments?: MessageAttachment[];
       canalName?: string;
-    }) => chatService.sendMessage(params),
+    }) =>
+      chatService.sendMessage({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+      }),
     onSuccess: async (msg, vars) => {
       await notificationService.markCanalAsRead(vars.canalId, vars.authorId);
       if (vars.canalName && msg.content) {
@@ -89,7 +102,12 @@ export function useChatActions(activeCanalId: string | null) {
     }: {
       messageId: string;
       userId: string;
-    }) => chatService.confirmEmargement(messageId, userId),
+    }) =>
+      chatService.confirmEmargement(
+        activeGrandeTribbuId || 'gt-main',
+        messageId,
+        userId
+      ),
     onSuccess: invalidateAll,
   });
 
@@ -99,7 +117,11 @@ export function useChatActions(activeCanalId: string | null) {
       description: string;
       color: string;
       createdBy: string;
-    }) => chatService.createTribbu(params),
+    }) =>
+      chatService.createTribbu({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+      }),
     onSuccess: invalidateAll,
   });
 
@@ -110,7 +132,11 @@ export function useChatActions(activeCanalId: string | null) {
       description: string;
       memberIds: string[];
       createdBy: string;
-    }) => chatService.createTippi(params),
+    }) =>
+      chatService.createTippi({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+      }),
     onSuccess: invalidateAll,
   });
 
@@ -121,7 +147,11 @@ export function useChatActions(activeCanalId: string | null) {
       topic: string;
       participantIds: string[];
       createdBy: string;
-    }) => chatService.createFeuDeCamp(params),
+    }) =>
+      chatService.createFeuDeCamp({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+      }),
     onSuccess: invalidateAll,
   });
 
@@ -131,7 +161,12 @@ export function useChatActions(activeCanalId: string | null) {
       tribbuId: string;
       role: TribbuRole;
       invitedBy: string;
-    }) => chatService.createInvitation(params),
+    }) =>
+      chatService.createInvitation({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+        grandeTribbuSlug: activeSlug || 'les-sentiers-vivants',
+      }),
     onSuccess: invalidateAll,
   });
 
@@ -150,9 +185,15 @@ export function useChatActions(activeCanalId: string | null) {
       tribbuId: string;
       role: TribbuRole;
       assignedBy: string;
-    }) => chatService.assignMemberToTribbu(params),
+    }) =>
+      chatService.assignMemberToTribbu({
+        ...params,
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+      }),
     onSuccess: invalidateAll,
   });
+
+  void activeCanalId;
 
   return {
     sendMessage: sendMessageMutation.mutateAsync,
@@ -167,4 +208,3 @@ export function useChatActions(activeCanalId: string | null) {
     assignMember: assignMemberMutation.mutateAsync,
   };
 }
-

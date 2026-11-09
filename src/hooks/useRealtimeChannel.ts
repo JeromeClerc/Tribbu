@@ -13,8 +13,8 @@ export function useRealtimeChannel(activeCanalId: string | null) {
 
   useEffect(() => {
     const refreshQueries = () => {
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.hierarchy });
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.allMessages });
+      void queryClient.invalidateQueries({ queryKey: ['tribbu', 'hierarchy'] });
+      void queryClient.invalidateQueries({ queryKey: ['tribbu', 'messages'] });
       if (activeCanalId) {
         void queryClient.invalidateQueries({
           queryKey: QUERY_KEYS.canalMessages(activeCanalId),

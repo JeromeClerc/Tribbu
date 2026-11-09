@@ -19,7 +19,7 @@ export type TribbuRole = 'MANITOU' | 'CHEF' | 'PYGMEE';
 export type MembershipStatus = 'INVITED' | 'ACTIVE' | 'REJECTED';
 
 /**
- * Schéma des collections Cloud Firestore pour Tribbu
+ * Schéma des collections Cloud Firestore pour Tribbu (Architecture SaaS Multi-Associations)
  */
 export interface FirestoreCollections {
   profiles: {
@@ -29,6 +29,7 @@ export interface FirestoreCollections {
     avatar_url: string | null;
     phone_number: string | null;
     sms_notifications_enabled: boolean;
+    grande_tribbu_ids?: string[];
     global_role?: TribbuRole;
     tribbu_ids?: string[];
     chef_tribbu_ids?: string[];
@@ -38,8 +39,12 @@ export interface FirestoreCollections {
   };
   grande_tribbu: {
     id: string;
+    slug: string;
     name: string;
     description: string | null;
+    address: string | null;
+    contact_phone: string | null;
+    contact_email: string | null;
     logo_url: string | null;
     settings: Json;
     manitou_id: string;
@@ -59,6 +64,7 @@ export interface FirestoreCollections {
   };
   tippis: {
     id: string;
+    grande_tribbu_id: string;
     tribbu_id: string;
     name: string;
     description: string | null;
@@ -105,6 +111,7 @@ export interface FirestoreCollections {
   };
   messages: {
     id: string;
+    grande_tribbu_id: string;
     canal_id: string;
     author_id: string;
     content: string;
@@ -118,12 +125,14 @@ export interface FirestoreCollections {
   };
   emargements: {
     id: string;
+    grande_tribbu_id: string;
     message_id: string;
     user_id: string;
     confirmed_at: string;
   };
   canal_lectures: {
     id: string;
+    grande_tribbu_id: string;
     canal_id: string;
     user_id: string;
     last_read_at: string;

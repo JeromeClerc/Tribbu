@@ -6,24 +6,44 @@ import React, {
   useState,
 } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { authService } from '@/services/authService';
+import {
+  authService,
+  type CreateAssociationParams,
+} from '@/services/authService';
 import { chatService } from '@/services/chatService';
 import { firebaseAuth, isFirebaseConfigured } from '@/lib/firebaseClient';
-import type { MembreRole, Profile, TribbuRole } from '@/types/tribbu.types';
+import {
+  getAssociationSlugFromPathname,
+  navigateToAssociationSlug,
+} from '@/lib/utils';
+import type {
+  GrandeTribbu,
+  MembreRole,
+  Profile,
+  TribbuRole,
+} from '@/types/tribbu.types';
 
 export interface PendingInvitationParams {
   token: string;
   email: string;
   tribbuId: string | null;
+  slug: string | null;
 }
 
 interface AuthContextValue {
   user: Profile | null;
   userRoles: MembreRole[];
   globalRole: TribbuRole;
+  activeSlug: string | null;
+  activeAssociation: GrandeTribbu | null;
+  allAssociations: GrandeTribbu[];
+  isMemberOfActiveAssociation: boolean;
   isLoading: boolean;
   pendingInvitation: PendingInvitationParams | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, targetSlug?: string | null) => Promise<void>;
+  createAssociationWithAccount: (
+    params: CreateAssociationParams
+  ) => Promise<GrandeTribbu>;
   completeInvitationSignup: (params: {
     email: string;
     displayName: string;
@@ -31,8 +51,10 @@ interface AuthContextValue {
     phoneNumber?: string;
     invitationToken: string;
     tribbuId?: string | null;
+    grandeTribbuId?: string | null;
   }) => Promise<void>;
   switchPersona: (userId: string) => Promise<void>;
+  selectAssociationSlug: (slug: string | null) => void;
   updatePreferences: (
     updates: Partial<
       Pick<
@@ -68,37 +90,78 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [user, setUser] = useState<Profile | null>(null);
   const [userRoles, setUserRoles] = useState<MembreRole[]>([]);
-  const [globalRole, setGlobalRole] = useState<TribbuRole>('MANITOU');
+  const [globalRole, setGlobalRole] = useState<TribbuRole>('PYGMEE');
+  const [activeSlug, setActiveSlug] = useState<string | null>(() =>
+    getAssociationSlugFromPathname()
+  );
+  const [activeAssociation, setActiveAssociation] =
+    useState<GrandeTribbu | null>(null);
+  const [allAssociations, setAllAssociations] = useState<GrandeTribbu[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [pendingInvitation, setPendingInvitation] =
     useState<PendingInvitationParams | null>(null);
 
-  // Détection automatique d'une URL d'invitation (?invite_token=...&email=...)
+  // Synchronise `activeSlug` avec l'URL du navigateur (`/<slug>`)
+  useEffect(() => {
+    const syncRoute = () => {
+      setActiveSlug(getAssociationSlugFromPathname());
+    };
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('tribbu-route-changed', syncRoute);
+    return () => {
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('tribbu-route-changed', syncRoute);
+    };
+  }, []);
+
+  // Détection automatique d'une URL d'invitation (`/<slug>?invite_token=...&email=...`)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('invite_token');
     const email = params.get('email') || '';
     const tribbuId = params.get('tribbu_id');
+    const slug = getAssociationSlugFromPathname();
 
     if (token) {
-      setPendingInvitation({ token, email, tribbuId });
+      setPendingInvitation({ token, email, tribbuId, slug });
     }
   }, []);
 
   const refreshAuth = useCallback(async () => {
     try {
-      const [profile, hierarchy] = await Promise.all([
+      const currentSlug = getAssociationSlugFromPathname();
+      const [profile, associations] = await Promise.all([
         authService.getCurrentProfile(),
-        chatService.fetchHierarchy(),
+        authService.listAssociations(),
       ]);
 
+      setAllAssociations(associations);
+
+      // Si aucun slug n'est dans l'URL mais que l'utilisateur est connecté,
+      // on retrouve automatiquement son association et on met à jour l'URL `/<slug>` !
+      let resolvedSlug = currentSlug;
+      if (!resolvedSlug && profile) {
+        const userAsso =
+          associations.find((a) => a.manitou_id === profile.id) ||
+          associations.find((a) =>
+            profile.grande_tribbu_ids?.includes(a.id)
+          );
+        if (userAsso) {
+          resolvedSlug = userAsso.slug;
+          navigateToAssociationSlug(resolvedSlug, true);
+        }
+      }
+
+      const hierarchy = await chatService.fetchHierarchy(resolvedSlug);
+
       setUser(profile);
+      setActiveAssociation(hierarchy.grandeTribbu);
       setUserRoles(hierarchy.membresRoles);
       setGlobalRole(
         computeHighestRole(
           profile?.id,
           hierarchy.membresRoles,
-          hierarchy.grandeTribbu.manitou_id
+          hierarchy.grandeTribbu?.manitou_id
         )
       );
     } finally {
@@ -122,13 +185,63 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     window.addEventListener('tribbu-local-mutation', handleLocalMutation);
     return () =>
       window.removeEventListener('tribbu-local-mutation', handleLocalMutation);
-  }, [refreshAuth]);
+  }, [refreshAuth, activeSlug]);
 
-  const signIn = async (email: string, password: string) => {
+  const isMemberOfActiveAssociation = React.useMemo(() => {
+    if (!user || !activeAssociation) return false;
+    if (activeAssociation.manitou_id === user.id) return true;
+    if (user.grande_tribbu_ids?.includes(activeAssociation.id)) return true;
+    return userRoles.some(
+      (r) =>
+        r.user_id === user.id &&
+        r.grande_tribbu_id === activeAssociation.id &&
+        r.status === 'ACTIVE'
+    );
+  }, [user, activeAssociation, userRoles]);
+
+  const selectAssociationSlug = useCallback((slug: string | null) => {
+    navigateToAssociationSlug(slug, false);
+    setActiveSlug(slug);
+  }, []);
+
+  const signIn = async (
+    email: string,
+    password: string,
+    targetSlug?: string | null
+  ) => {
     setIsLoading(true);
     try {
-      await authService.signInWithEmail(email, password);
+      const profile = await authService.signInWithEmail(email, password);
+      const associations = await authService.listAssociations();
+
+      const desiredSlug =
+        targetSlug ||
+        getAssociationSlugFromPathname() ||
+        associations.find((a) => a.manitou_id === profile.id)?.slug ||
+        associations.find((a) => profile.grande_tribbu_ids?.includes(a.id))
+          ?.slug ||
+        associations[0]?.slug ||
+        null;
+
+      if (desiredSlug) {
+        navigateToAssociationSlug(desiredSlug, false);
+      }
       await refreshAuth();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createAssociationWithAccount = async (
+    params: CreateAssociationParams
+  ): Promise<GrandeTribbu> => {
+    setIsLoading(true);
+    try {
+      const { association } =
+        await authService.registerCreatorAndCreateAssociation(params);
+      navigateToAssociationSlug(association.slug, false);
+      await refreshAuth();
+      return association;
     } finally {
       setIsLoading(false);
     }
@@ -141,13 +254,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     phoneNumber?: string;
     invitationToken: string;
     tribbuId?: string | null;
+    grandeTribbuId?: string | null;
   }) => {
     setIsLoading(true);
     try {
-      await authService.finalizeInvitationSignup(params);
+      const targetSlug =
+        pendingInvitation?.slug || getAssociationSlugFromPathname();
+      const targetAsso = targetSlug
+        ? await authService.getAssociationBySlug(targetSlug)
+        : null;
+
+      await authService.finalizeInvitationSignup({
+        ...params,
+        grandeTribbuId: targetAsso?.id || params.grandeTribbuId || 'gt-main',
+      });
+
       setPendingInvitation(null);
-      const cleanUrl = window.location.origin + window.location.pathname;
-      window.history.replaceState({}, document.title, cleanUrl);
+      const finalSlug = targetAsso?.slug || targetSlug || 'les-sentiers-vivants';
+      navigateToAssociationSlug(finalSlug, false);
       await refreshAuth();
     } finally {
       setIsLoading(false);
@@ -155,7 +279,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const switchPersona = async (userId: string) => {
-    authService.switchDemoPersona(userId);
+    const prof = authService.switchDemoPersona(userId);
+    const associations = await authService.listAssociations();
+    const userAsso =
+      associations.find((a) => a.manitou_id === prof.id) ||
+      associations.find((a) => prof.grande_tribbu_ids?.includes(a.id)) ||
+      associations[0];
+
+    if (userAsso && !getAssociationSlugFromPathname()) {
+      navigateToAssociationSlug(userAsso.slug, false);
+    }
     await refreshAuth();
   };
 
@@ -174,8 +307,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const clearPendingInvitation = () => {
     setPendingInvitation(null);
-    const cleanUrl = window.location.origin + window.location.pathname;
-    window.history.replaceState({}, document.title, cleanUrl);
+    const slug = getAssociationSlugFromPathname();
+    navigateToAssociationSlug(slug, false);
   };
 
   const signOut = async () => {
@@ -189,11 +322,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         user,
         userRoles,
         globalRole,
+        activeSlug,
+        activeAssociation,
+        allAssociations,
+        isMemberOfActiveAssociation,
         isLoading,
         pendingInvitation,
         signIn,
+        createAssociationWithAccount,
         completeInvitationSignup,
         switchPersona,
+        selectAssociationSlug,
         updatePreferences,
         clearPendingInvitation,
         signOut,

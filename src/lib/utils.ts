@@ -15,6 +15,69 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Convertit le nom d'une association en un slug d'URL propre :
+ * tout en minuscule, sans accents et sans espaces (ex: "Les Sentiers Vivants" -> "les-sentiers-vivants").
+ */
+export function slugifyAssociationName(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Nettoie une saisie manuelle de slug (minuscule, sans accents, sans espaces).
+ */
+export function sanitizeSlugInput(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-');
+}
+
+/**
+ * Extrait le slug d'association présent dans l'URL courante (ex: `https://.../les-sentiers-vivants` -> `'les-sentiers-vivants'`).
+ * Retourne `null` si l'utilisateur est sur la page d'accueil SaaS racine `/`.
+ */
+export function getAssociationSlugFromPathname(
+  pathname: string = typeof window !== 'undefined' ? window.location.pathname : '/'
+): string | null {
+  const cleaned = pathname.replace(/^\/+|\/+$/g, '');
+  if (!cleaned) return null;
+  const firstSegment = cleaned.split('/')[0];
+  if (
+    !firstSegment ||
+    firstSegment === 'index.html' ||
+    firstSegment.startsWith('assets') ||
+    firstSegment.startsWith('icons')
+  ) {
+    return null;
+  }
+  return sanitizeSlugInput(firstSegment);
+}
+
+/**
+ * Met à jour l'URL du navigateur avec le `/<slug>` de l'association active sans recharger la page.
+ */
+export function navigateToAssociationSlug(
+  slug: string | null,
+  preserveQuery: boolean = false
+): void {
+  if (typeof window === 'undefined') return;
+  const search = preserveQuery ? window.location.search : '';
+  const targetPath = slug ? `/${slug}${search}` : `/${search}`;
+  if (window.location.pathname + window.location.search !== targetPath) {
+    window.history.pushState({}, document.title, targetPath);
+    window.dispatchEvent(new CustomEvent('tribbu-route-changed'));
+  }
+}
+
 export function formatTimeFr(isoDate: string): string {
   try {
     return new Intl.DateTimeFormat('fr-FR', {
