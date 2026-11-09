@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" fill="none">
+  <defs>
+    <linearGradient id="tribbu-teal" x1="20" y1="150" x2="90" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0A4C7A" />
+      <stop offset="55%" stop-color="#0E85A1" />
+      <stop offset="100%" stop-color="#19B5CE" />
+    </linearGradient>
+    <linearGradient id="tribbu-purple" x1="150" y1="150" x2="210" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#532B88" />
+      <stop offset="55%" stop-color="#7B2D90" />
+      <stop offset="100%" stop-color="#A53896" />
+    </linearGradient>
+    <linearGradient id="tribbu-green" x1="65" y1="150" x2="155" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#158F68" />
+      <stop offset="50%" stop-color="#3BA55D" />
+      <stop offset="100%" stop-color="#68C151" />
+    </linearGradient>
+  </defs>
+
+  <!-- Left Teepee (Teal) -->
+  <path
+    d="M16 146 L70 30 L61 14 L69 14 L75 25 L81 14 L89 14 L80 30 L134 146 L94 146 L75 104 L56 146 Z"
+    fill="url(#tribbu-teal)"
+  />
+
+  <!-- Right Teepee (Purple) -->
+  <path
+    d="M106 146 L160 30 L151 14 L159 14 L165 25 L171 14 L179 14 L170 30 L224 146 L184 146 L165 104 L146 146 Z"
+    fill="url(#tribbu-purple)"
+  />
+
+  <!-- Center Teepee (Green - Foreground) -->
+  <path
+    d="M60 146 L115 28 L106 12 L114 12 L120 23 L126 12 L134 12 L125 28 L180 146 L139 146 L120 102 L101 146 Z"
+    fill="url(#tribbu-green)"
+  />
+</svg>
+

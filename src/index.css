@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Palette extraite de Tribbu_logo.png */
+    --tribbu-teal: 14 138 158;       /* #0E8A9E */
+    --tribbu-teal-light: 25 181 206; /* #19B5CE */
+    --tribbu-teal-dark: 10 76 122;   /* #0A4C7A */
+
+    --tribbu-green: 59 165 93;       /* #3BA55D */
+    --tribbu-green-light: 104 193 81;/* #68C151 */
+    --tribbu-green-dark: 21 143 104; /* #158F68 */
+
+    --tribbu-purple: 139 50 156;     /* #8B329C */
+    --tribbu-purple-light: 165 56 150;/* #A53896 */
+    --tribbu-purple-dark: 83 43 136; /* #532B88 */
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* Masque la barre de défilement sur la barre d'onglets type navigateur */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Barre de défilement discrète pour les listes de messages */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.45);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.16s ease-out forwards;
+}
+
