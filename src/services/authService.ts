@@ -2,6 +2,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  deleteUser,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
 import {
@@ -712,6 +713,30 @@ export const authService = {
         );
       } catch {
         // Ignore si règles non publiées
+      }
+    }
+  },
+
+  /**
+   * Supprime le compte Firebase Auth courant (ou le déconnecte si une ré-authentification est requise)
+   * à l'issue de la suppression intégrale de l'association.
+   */
+  async deleteOrSignOutCurrentAccount(): Promise<void> {
+    localStorage.setItem(DEMO_USER_STORAGE_KEY, 'logged-out');
+    if (isFirebaseConfigured && firebaseAuth) {
+      const current = firebaseAuth.currentUser;
+      if (current) {
+        try {
+          await deleteUser(current);
+          return;
+        } catch {
+          // Si Firebase exige une connexion plus récente pour deleteUser, on déconnecte proprement la session
+        }
+      }
+      try {
+        await firebaseSignOut(firebaseAuth);
+      } catch {
+        // Ignore
       }
     }
   },

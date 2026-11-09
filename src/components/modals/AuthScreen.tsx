@@ -56,6 +56,8 @@ export const AuthScreen: React.FC = () => {
   useEffect(() => {
     if (activeSlug && activeAssociation) {
       setMode('login');
+    } else if (!activeSlug) {
+      setMode('create-saas');
     }
   }, [activeSlug, activeAssociation]);
 

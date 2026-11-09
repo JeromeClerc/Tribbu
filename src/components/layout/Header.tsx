@@ -12,6 +12,7 @@ import {
   Search,
   Shield,
   Sun,
+  Trash2,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -209,6 +210,18 @@ export const Header: React.FC<HeaderProps> = ({
               <Shield className="w-3.5 h-3.5 text-tribbu-purple" />
               <span>Rôles</span>
             </button>
+
+            {globalRole === 'MANITOU' && (
+              <button
+                type="button"
+                onClick={() => openModal('delete-association')}
+                className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
+                title="Supprimer définitivement l'association (Grand Manitou uniquement)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Supprimer l'asso</span>
+              </button>
+            )}
           </>
         )}
 

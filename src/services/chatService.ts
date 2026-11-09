@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDocs,
   orderBy,
@@ -13,6 +14,7 @@ import {
   firestoreDb,
   isFirebaseConfigured,
 } from '@/lib/firebaseClient';
+import { deleteAssociationStorageFiles } from '@/lib/storage';
 import { extractMentionsFromContent } from '@/lib/utils';
 import {
   DEMO_CANAUX,
@@ -958,5 +960,227 @@ export const chatService = {
     }
 
     notifyRealtimeListeners('hierarchy:updated');
+  },
+
+  /**
+   * SUPPRESSION INTÉGRALE ET IRRÉVERSIBLE D'UNE ASSOCIATION (Réservée au Grand Manitou) :
+   * 1. Supprime tous les fichiers (images .png/.jpg, .pdf, etc.) dans Firebase Cloud Storage.
+   * 2. Supprime tous les messages, émargements et accusés de lecture.
+   * 3. Supprime tous les canaux, Feux de camp, Tippis et Tribbus de l'association.
+   * 4. Supprime tous les rôles, invitations et profils des membres liés à cette association.
+   * 5. Supprime l'association (`grande_tribbu`) elle-même dans Firestore et dans le cache local.
+   */
+  async deleteEntireAssociation(params: {
+    grandeTribbuId: string;
+    grandeTribbuSlug: string;
+    requestedByUserId: string;
+  }): Promise<{
+    deletedMessagesCount: number;
+    deletedFilesCount: number;
+    deletedCanauxCount: number;
+    deletedMembersCount: number;
+  }> {
+    const { grandeTribbuId: gtId, grandeTribbuSlug } = params;
+
+    authService.isProvisioning = true;
+
+    try {
+      // 1. Collecte complète de la hiérarchie et des messages de l'association
+      const hierarchy = await this.fetchHierarchy(grandeTribbuSlug);
+      const messages = await this.fetchMessages(grandeTribbuSlug);
+
+      const canalIds = hierarchy.canaux.map((c) => c.id);
+      const canalIdSet = new Set(canalIds);
+      const tribbuIdSet = new Set(hierarchy.tribbus.map((t) => t.id));
+
+      const allAttachments: MessageAttachment[] = [];
+      for (const msg of messages) {
+        if (Array.isArray(msg.attachments)) {
+          allAttachments.push(...msg.attachments);
+        }
+      }
+
+      const memberUserIds = new Set<string>();
+      if (hierarchy.grandeTribbu?.manitou_id) {
+        memberUserIds.add(hierarchy.grandeTribbu.manitou_id);
+      }
+      for (const role of hierarchy.membresRoles) {
+        if (role.user_id) memberUserIds.add(role.user_id);
+      }
+      for (const prof of hierarchy.profiles) {
+        memberUserIds.add(prof.id);
+      }
+      memberUserIds.add(params.requestedByUserId);
+
+      // 2. Suppression de tous les fichiers (images, PDF, etc.) dans Firebase Cloud Storage
+      const deletedFilesCount = await deleteAssociationStorageFiles(
+        allAttachments,
+        canalIds
+      );
+
+      // 3. Purge intégrale du stockage local pour cette association
+      const localMessages = readLocal<ChatMessage[]>(
+        STORAGE_KEYS.MESSAGES,
+        DEMO_MESSAGES
+      );
+      writeLocal(
+        STORAGE_KEYS.MESSAGES,
+        localMessages.filter(
+          (m) => m.grande_tribbu_id !== gtId && !canalIdSet.has(m.canal_id)
+        )
+      );
+
+      const localCanaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
+      writeLocal(
+        STORAGE_KEYS.CANAUX,
+        localCanaux.filter(
+          (c) => c.grande_tribbu_id !== gtId && !canalIdSet.has(c.id)
+        )
+      );
+
+      const localFeux = readLocal<FeuDeCamp[]>(
+        STORAGE_KEYS.FEUX,
+        DEMO_FEUX_DE_CAMP
+      );
+      writeLocal(
+        STORAGE_KEYS.FEUX,
+        localFeux.filter((f) => f.grande_tribbu_id !== gtId)
+      );
+
+      const localTippis = readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS);
+      writeLocal(
+        STORAGE_KEYS.TIPPIS,
+        localTippis.filter(
+          (tp) =>
+            tp.grande_tribbu_id !== gtId && !tribbuIdSet.has(tp.tribbu_id)
+        )
+      );
+
+      const localTribbus = readLocal<Tribbu[]>(
+        STORAGE_KEYS.TRIBBUS,
+        DEMO_TRIBBUS
+      );
+      writeLocal(
+        STORAGE_KEYS.TRIBBUS,
+        localTribbus.filter((t) => t.grande_tribbu_id !== gtId)
+      );
+
+      const localRoles = readLocal<MembreRole[]>(
+        STORAGE_KEYS.ROLES,
+        DEMO_MEMBRES_ROLES
+      );
+      writeLocal(
+        STORAGE_KEYS.ROLES,
+        localRoles.filter((r) => r.grande_tribbu_id !== gtId)
+      );
+
+      const localProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
+      const remainingProfiles: Profile[] = [];
+      for (const p of localProfiles) {
+        const nextGtIds = (p.grande_tribbu_ids || []).filter(
+          (id) => id !== gtId
+        );
+        if (memberUserIds.has(p.id) && nextGtIds.length === 0) {
+          // Supprime les horodatages de lecture de ce membre supprimé
+          try {
+            localStorage.removeItem(`tribbu_canal_last_read_map_${p.id}`);
+          } catch {
+            // Ignore
+          }
+          continue;
+        }
+        remainingProfiles.push({
+          ...p,
+          grande_tribbu_ids: nextGtIds,
+        });
+      }
+      writeLocal(STORAGE_KEYS.PROFILES, remainingProfiles);
+
+      const localAssociations = readLocal<GrandeTribbu[]>(
+        STORAGE_KEYS.ASSOCIATIONS,
+        [DEMO_GRANDE_TRIBBU]
+      );
+      writeLocal(
+        STORAGE_KEYS.ASSOCIATIONS,
+        localAssociations.filter(
+          (a) => a.id !== gtId && a.slug !== grandeTribbuSlug
+        )
+      );
+
+      // 4. Purge intégrale dans Cloud Firestore
+      if (isFirebaseConfigured && firestoreDb) {
+        const deleteQueryDocs = async (collectionName: string) => {
+          try {
+            const snap = await getDocs(
+              query(
+                collection(firestoreDb!, collectionName),
+                where('grande_tribbu_id', '==', gtId)
+              )
+            );
+            await Promise.all(
+              snap.docs.map((d) =>
+                deleteDoc(doc(firestoreDb!, collectionName, d.id)).catch(
+                  () => undefined
+                )
+              )
+            );
+          } catch {
+            // Ignore si la collection est déjà vide ou restreinte
+          }
+        };
+
+        // 4.1 Suppression des émargements, messages, canaux, feux de camp, tippis, tribbus et rôles
+        await deleteQueryDocs('emargements');
+        await deleteQueryDocs('messages');
+
+        // Suppression par ID des messages/canaux connus au cas où certains n'auraient pas `grande_tribbu_id` indexé
+        await Promise.all(
+          messages.map((m) =>
+            deleteDoc(doc(firestoreDb!, 'messages', m.id)).catch(() => undefined)
+          )
+        );
+
+        for (const cId of canalIds) {
+          for (const uid of memberUserIds) {
+            await deleteDoc(
+              doc(firestoreDb, 'canal_lectures', `${cId}_${uid}`)
+            ).catch(() => undefined);
+          }
+        }
+
+        await deleteQueryDocs('canaux');
+        await deleteQueryDocs('feux_de_camp');
+        await deleteQueryDocs('tippis');
+        await deleteQueryDocs('tribbus');
+        await deleteQueryDocs('membres_roles');
+
+        // 4.2 Suppression des profils et présences des membres liés à cette association
+        for (const uid of memberUserIds) {
+          await deleteDoc(doc(firestoreDb, 'presence', uid)).catch(
+            () => undefined
+          );
+          await deleteDoc(doc(firestoreDb, 'profiles', uid)).catch(
+            () => undefined
+          );
+        }
+
+        // 4.3 Suppression du document racine de l'association (`grande_tribbu/{gtId}`)
+        await deleteDoc(doc(firestoreDb, 'grande_tribbu', gtId)).catch(
+          () => undefined
+        );
+      }
+
+      // 5. Suppression / Déconnexion du compte courant pour repartir à zéro sur la page initiale
+      await authService.deleteOrSignOutCurrentAccount();
+
+      return {
+        deletedMessagesCount: messages.length,
+        deletedFilesCount,
+        deletedCanauxCount: canalIds.length,
+        deletedMembersCount: memberUserIds.size,
+      };
+    } finally {
+      authService.isProvisioning = false;
+    }
   },
 };

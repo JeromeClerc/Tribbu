@@ -18,8 +18,12 @@ service firebase.storage {
           request.resource.contentType.matches('image/jpeg') ||
           request.resource.contentType.matches('application/pdf')
         );
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      // Autorise l'auteur du fichier ou le Grand Manitou (lors de la suppression de l'association) à purger les pièces jointes
+      allow delete: if request.auth != null;
+    }
+
+    match /chat-attachments/{allPaths=**} {
+      allow read, delete: if request.auth != null;
     }
   }
 }
-

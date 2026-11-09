@@ -79,8 +79,8 @@ service cloud.firestore {
     // 1. PROFILES
     match /profiles/{userId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && currentUserId() == userId;
-      allow delete: if false;
+      allow create, update: if isSignedIn();
+      allow delete: if isSignedIn();
     }
 
     // 2. GRANDE_TRIBBU (Associations du SaaS)
@@ -165,17 +165,18 @@ service cloud.firestore {
     match /emargements/{emargementId} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn() && request.resource.data.user_id == currentUserId();
+      allow delete: if isSignedIn();
     }
 
     // 10. CANAL_LECTURES
     match /canal_lectures/{lectureId} {
-      allow read, write: if isSignedIn();
+      allow read, write, delete: if isSignedIn();
     }
 
     // 11. PRESENCE
     match /presence/{userId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && currentUserId() == userId;
+      allow write, delete: if isSignedIn();
     }
   }
 }

@@ -64,6 +64,7 @@ interface AuthContextValue {
     >
   ) => Promise<void>;
   clearPendingInvitation: () => void;
+  deleteActiveAssociation: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshAuth: () => Promise<void>;
 }
@@ -321,6 +322,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     navigateToAssociationSlug(slug, false);
   };
 
+  const deleteActiveAssociation = async () => {
+    if (!user || !activeAssociation || globalRole !== 'MANITOU') {
+      throw new Error(
+        "Seul le Grand Manitou est autorisé à supprimer l'association."
+      );
+    }
+
+    await chatService.deleteEntireAssociation({
+      grandeTribbuId: activeAssociation.id,
+      grandeTribbuSlug: activeAssociation.slug,
+      requestedByUserId: user.id,
+    });
+
+    setUser(null);
+    setActiveAssociation(null);
+    setUserRoles([]);
+    setGlobalRole('PYGMEE');
+    setActiveSlug(null);
+    navigateToAssociationSlug(null, false);
+
+    const remainingAssociations = await authService.listAssociations();
+    setAllAssociations(remainingAssociations);
+  };
+
   const signOut = async () => {
     await authService.signOut();
     setUser(null);
@@ -345,6 +370,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         selectAssociationSlug,
         updatePreferences,
         clearPendingInvitation,
+        deleteActiveAssociation,
         signOut,
         refreshAuth,
       }}

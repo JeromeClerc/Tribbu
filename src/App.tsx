@@ -24,6 +24,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { InviteModal } from '@/components/modals/InviteModal';
 import { CreateTippiModal } from '@/components/modals/CreateTippiModal';
 import { RoleManager } from '@/components/modals/RoleManager';
+import { DeleteAssociationModal } from '@/components/modals/DeleteAssociationModal';
 import { AuthScreen } from '@/components/modals/AuthScreen';
 
 export const App: React.FC = () => {
@@ -343,6 +344,18 @@ export const App: React.FC = () => {
         membresRoles={membresRoles}
         onUpdateRole={updateMemberRole}
         onAssignMember={assignMember}
+      />
+
+      <DeleteAssociationModal
+        associationName={grandeTribbu.name}
+        associationSlug={grandeTribbu.slug}
+        messages={allMessages}
+        canaux={canaux}
+        tribbus={tribbus}
+        tippis={tippis}
+        feuxDeCamp={feuxDeCamp}
+        profiles={profiles}
+        membresRoles={membresRoles}
       />
     </div>
   );

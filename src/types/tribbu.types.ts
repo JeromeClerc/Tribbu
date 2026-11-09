@@ -97,6 +97,7 @@ export interface MessageAttachment {
   id: string;
   name: string;
   url: string;
+  storagePath?: string;
   type: 'image' | 'pdf';
   mimeType: 'image/png' | 'image/jpeg' | 'application/pdf';
   size: number;

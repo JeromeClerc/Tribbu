@@ -8,6 +8,7 @@ export type ModalType =
   | 'create-tribbu'
   | 'create-feu-de-camp'
   | 'role-manager'
+  | 'delete-association'
   | null;
 
 export interface ReplyTarget {
@@ -45,6 +46,7 @@ interface UIState {
   setSearchQuery: (query: string) => void;
   setFilterMentionsOnly: (val: boolean) => void;
   toggleFilterMentionsOnly: () => void;
+  resetAfterAssociationDeletion: () => void;
 }
 
 const DEFAULT_TABS: OpenTab[] = [
@@ -143,6 +145,18 @@ export const useUIStore = create<UIState>()(
       setFilterMentionsOnly: (val) => set({ filterMentionsOnly: val }),
       toggleFilterMentionsOnly: () =>
         set((state) => ({ filterMentionsOnly: !state.filterMentionsOnly })),
+      resetAfterAssociationDeletion: () =>
+        set({
+          openTabs: [],
+          activeCanalId: null,
+          activeModal: null,
+          modalContextTribbuId: null,
+          replyTarget: null,
+          searchQuery: '',
+          filterMentionsOnly: false,
+          notificationDrawerOpen: false,
+          mobileDrawerOpen: false,
+        }),
     }),
     {
       name: 'tribbu-ui-tabs-storage',

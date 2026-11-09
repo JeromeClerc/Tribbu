@@ -11,6 +11,7 @@ import {
   Plus,
   Shield,
   Tent,
+  Trash2,
   UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -481,6 +482,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Shield className="w-3.5 h-3.5 text-tribbu-purple" />
               <span>Administration des rôles & Tribbus</span>
+            </button>
+          )}
+
+          {globalRole === 'MANITOU' && (
+            <button
+              type="button"
+              onClick={() => openModal('delete-association')}
+              className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-rose-500 hover:bg-rose-500/10 border border-rose-500/20 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Supprimer l'association</span>
             </button>
           )}
         </div>
