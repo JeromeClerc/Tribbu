@@ -55,16 +55,20 @@ export const notificationService = {
 
     if (isFirebaseConfigured && firestoreDb) {
       const lectureId = `${canalId}_${userId}`;
-      await setDoc(
-        doc(firestoreDb, 'canal_lectures', lectureId),
-        {
-          id: lectureId,
-          canal_id: canalId,
-          user_id: userId,
-          last_read_at: nowIso,
-        },
-        { merge: true }
-      );
+      try {
+        await setDoc(
+          doc(firestoreDb, 'canal_lectures', lectureId),
+          {
+            id: lectureId,
+            canal_id: canalId,
+            user_id: userId,
+            last_read_at: nowIso,
+          },
+          { merge: true }
+        );
+      } catch {
+        // Ignore si les règles Firestore ne sont pas encore publiées
+      }
     }
   },
 
@@ -89,11 +93,15 @@ export const notificationService = {
     }
 
     if (isFirebaseConfigured && firestoreDb) {
-      await setDoc(
-        doc(firestoreDb, 'profiles', userId),
-        { last_seen_at: nowIso, updated_at: nowIso },
-        { merge: true }
-      );
+      try {
+        await setDoc(
+          doc(firestoreDb, 'profiles', userId),
+          { last_seen_at: nowIso, updated_at: nowIso },
+          { merge: true }
+        );
+      } catch {
+        // Ignore si les règles Firestore ne sont pas encore publiées
+      }
     }
   },
 

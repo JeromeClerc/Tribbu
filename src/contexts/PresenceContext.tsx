@@ -102,7 +102,9 @@ export const PresenceProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (isFirebaseConfigured && firestoreDb) {
       const myPresenceRef = doc(firestoreDb, 'presence', user.id);
-      void setDoc(myPresenceRef, myPresence, { merge: true });
+      void setDoc(myPresenceRef, myPresence, { merge: true }).catch(() => {
+        // Ignore si les règles Firestore de la console bloquent temporairement la présence
+      });
 
       const unsubscribe = onSnapshot(
         collection(firestoreDb, 'presence'),
@@ -112,6 +114,9 @@ export const PresenceProvider: React.FC<{ children: React.ReactNode }> = ({
             mapped[d.id] = d.data() as PresenceUser;
           });
           setRemoteUsers(mapped);
+        },
+        () => {
+          // Ignore silencieusement les erreurs de listener de présence
         }
       );
 

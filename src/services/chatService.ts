@@ -8,9 +8,12 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { firestoreDb, isFirebaseConfigured } from '@/lib/firebaseClient';
+import {
+  firebaseAuth,
+  firestoreDb,
+  isFirebaseConfigured,
+} from '@/lib/firebaseClient';
 import { extractMentionsFromContent } from '@/lib/utils';
-import { authService } from './authService';
 import {
   DEMO_CANAUX,
   DEMO_FEUX_DE_CAMP,
@@ -21,6 +24,7 @@ import {
   DEMO_TIPPIS,
   DEMO_TRIBBUS,
 } from './demoData';
+import { authService } from './authService';
 import type {
   Canal,
   ChatMessage,
@@ -37,32 +41,32 @@ import type {
 
 const STORAGE_KEYS = {
   ASSOCIATIONS: 'tribbu_state_associations',
+  MESSAGES: 'tribbu_state_messages',
+  CANAUX: 'tribbu_state_canaux',
   TRIBBUS: 'tribbu_state_tribbus',
   TIPPIS: 'tribbu_state_tippis',
-  FEUX: 'tribbu_state_feux',
-  CANAUX: 'tribbu_state_canaux',
+  FEUX: 'tribbu_state_feux_de_camp',
   ROLES: 'tribbu_custom_roles',
-  MESSAGES: 'tribbu_state_messages',
   PROFILES: 'tribbu_custom_profiles',
 };
 
-const broadcastChannel =
-  typeof window !== 'undefined' && 'BroadcastChannel' in window
-    ? new BroadcastChannel('tribbu-realtime-sync')
-    : null;
+const REALTIME_CHANNEL_NAME = 'tribbu-realtime-sync';
 
-function notifyRealtimeListeners(event: string, payload?: unknown) {
-  broadcastChannel?.postMessage({ event, payload, timestamp: Date.now() });
+function notifyRealtimeListeners(type: string, payload?: unknown) {
+  if ('BroadcastChannel' in window) {
+    const bc = new BroadcastChannel(REALTIME_CHANNEL_NAME);
+    bc.postMessage({ type, payload, timestamp: Date.now() });
+    bc.close();
+  }
   window.dispatchEvent(
-    new CustomEvent('tribbu-local-mutation', { detail: { event, payload } })
+    new CustomEvent('tribbu-local-mutation', { detail: { type, payload } })
   );
 }
 
 function readLocal<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
+    return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
   }
@@ -74,6 +78,13 @@ function writeLocal<T>(key: string, value: T): void {
   } catch {
     // Ignore storage quota errors
   }
+}
+
+function mergeById<T extends { id: string }>(localItems: T[], remoteItems: T[]): T[] {
+  const map = new Map<string, T>();
+  for (const item of localItems) map.set(item.id, item);
+  for (const item of remoteItems) map.set(item.id, item);
+  return Array.from(map.values());
 }
 
 export interface HierarchyBundle {
@@ -94,131 +105,31 @@ export const chatService = {
    * Aucun membre, canal, Tribbu ou Tippi d'une autre association n'est exposé.
    */
   async fetchHierarchy(targetSlug?: string | null): Promise<HierarchyBundle> {
-    if (isFirebaseConfigured && firestoreDb) {
-      const gtSnap = await getDocs(collection(firestoreDb, 'grande_tribbu'));
-      const allAssociations = gtSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<GrandeTribbu, 'id'>) })
-      );
-
-      const activeGt = targetSlug
-        ? allAssociations.find((a) => a.slug === targetSlug) || null
-        : allAssociations[0] || null;
-
-      if (!activeGt) {
-        return {
-          grandeTribbu: null,
-          allAssociations,
-          tribbus: [],
-          tippis: [],
-          feuxDeCamp: [],
-          canaux: [],
-          membresRoles: [],
-          profiles: [],
-        };
-      }
-
-      const gtId = activeGt.id;
-
-      const [
-        tribbusSnap,
-        tippisSnap,
-        feuxSnap,
-        canauxSnap,
-        rolesSnap,
-        profilesSnap,
-      ] = await Promise.all([
-        getDocs(
-          query(
-            collection(firestoreDb, 'tribbus'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-        getDocs(
-          query(
-            collection(firestoreDb, 'tippis'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-        getDocs(
-          query(
-            collection(firestoreDb, 'feux_de_camp'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-        getDocs(
-          query(
-            collection(firestoreDb, 'canaux'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-        getDocs(
-          query(
-            collection(firestoreDb, 'membres_roles'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-        getDocs(collection(firestoreDb, 'profiles')),
-      ]);
-
-      const tribbus = tribbusSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<Tribbu, 'id'>) })
-      );
-      const tippis = tippisSnap.docs.map(
-        (d) => ({
-          ...(d.data() as Omit<Tippi, 'id'>),
-          id: d.id,
-        })
-      );
-      const feuxDeCamp = feuxSnap.docs.map(
-        (d) => ({
-          ...(d.data() as Omit<FeuDeCamp, 'id'>),
-          id: d.id,
-        })
-      );
-      const canaux = canauxSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<Canal, 'id'>) })
-      );
-      const membresRoles = rolesSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<MembreRole, 'id'>) })
-      );
-
-      // Isolation stricte des profils : uniquement les membres rattachés à cette Grande Tribbu
-      const memberUserIds = new Set<string>([activeGt.manitou_id]);
-      membresRoles.forEach((mr) => {
-        if (mr.user_id && mr.status !== 'REJECTED') {
-          memberUserIds.add(mr.user_id);
-        }
-      });
-
-      const allProfiles = profilesSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<Profile, 'id'>) })
-      );
-      const isolatedProfiles = allProfiles.filter(
-        (p) =>
-          memberUserIds.has(p.id) || p.grande_tribbu_ids?.includes(gtId)
-      );
-
-      return {
-        grandeTribbu: activeGt,
-        allAssociations,
-        tribbus,
-        tippis,
-        feuxDeCamp,
-        canaux,
-        membresRoles,
-        profiles: isolatedProfiles,
-      };
-    }
-
-    // Mode local : isolation stricte par association (`grande_tribbu_id`)
-    const allAssociations = readLocal<GrandeTribbu[]>(
+    const localAssociations = readLocal<GrandeTribbu[]>(
       STORAGE_KEYS.ASSOCIATIONS,
       [DEMO_GRANDE_TRIBBU]
     );
 
+    let allAssociations = [...localAssociations];
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        const gtSnap = await getDocs(collection(firestoreDb, 'grande_tribbu'));
+        const remoteAssociations = gtSnap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<GrandeTribbu, 'id'>) })
+        );
+        const bySlug = new Map<string, GrandeTribbu>();
+        for (const a of localAssociations) bySlug.set(a.slug, a);
+        for (const a of remoteAssociations) bySlug.set(a.slug, a);
+        allAssociations = Array.from(bySlug.values());
+      } catch {
+        // Repli sur la liste locale si Firestore bloque la lecture avant connexion
+      }
+    }
+
     const activeGt = targetSlug
       ? allAssociations.find((a) => a.slug === targetSlug) || null
-      : allAssociations[0] || null;
+      : null;
 
     if (!activeGt) {
       return {
@@ -235,47 +146,152 @@ export const chatService = {
 
     const gtId = activeGt.id;
 
-    const allTribbus = readLocal<Tribbu[]>(STORAGE_KEYS.TRIBBUS, DEMO_TRIBBUS);
-    const tribbus = allTribbus.filter((t) => t.grande_tribbu_id === gtId);
-    const tribbuIdSet = new Set(tribbus.map((t) => t.id));
+    // Données locales isolées par `grande_tribbu_id`
+    const localTribbus = readLocal<Tribbu[]>(
+      STORAGE_KEYS.TRIBBUS,
+      DEMO_TRIBBUS
+    ).filter((t) => t.grande_tribbu_id === gtId);
+    const localTribbuIdSet = new Set(localTribbus.map((t) => t.id));
 
-    const allTippis = readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS);
-    const tippis = allTippis.filter(
+    const localTippis = readLocal<Tippi[]>(
+      STORAGE_KEYS.TIPPIS,
+      DEMO_TIPPIS
+    ).filter(
       (tp) =>
-        tp.grande_tribbu_id === gtId || tribbuIdSet.has(tp.tribbu_id)
+        tp.grande_tribbu_id === gtId || localTribbuIdSet.has(tp.tribbu_id)
     );
 
-    const allFeux = readLocal<FeuDeCamp[]>(
+    const localFeux = readLocal<FeuDeCamp[]>(
       STORAGE_KEYS.FEUX,
       DEMO_FEUX_DE_CAMP
-    );
-    const feuxDeCamp = allFeux.filter((f) => f.grande_tribbu_id === gtId);
+    ).filter((f) => f.grande_tribbu_id === gtId);
 
-    const allCanaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
-    const canaux = allCanaux.filter((c) => c.grande_tribbu_id === gtId);
+    const localCanaux = readLocal<Canal[]>(
+      STORAGE_KEYS.CANAUX,
+      DEMO_CANAUX
+    ).filter((c) => c.grande_tribbu_id === gtId);
 
-    const allRoles = readLocal<MembreRole[]>(
+    const localRoles = readLocal<MembreRole[]>(
       STORAGE_KEYS.ROLES,
       DEMO_MEMBRES_ROLES
-    );
-    const membresRoles = allRoles.filter((r) => r.grande_tribbu_id === gtId);
+    ).filter((r) => r.grande_tribbu_id === gtId);
 
     const customProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
-    const mergedProfiles = [...DEMO_PROFILES];
-    for (const cp of customProfiles) {
-      if (!mergedProfiles.some((p) => p.id === cp.id)) {
-        mergedProfiles.push(cp);
+    const mergedLocalProfiles = mergeById(DEMO_PROFILES, customProfiles);
+
+    // Si Firebase est configuré ET que l'utilisateur est authentifié dans Firebase Auth,
+    // on interroge Cloud Firestore et on fusionne avec le cache local.
+    if (isFirebaseConfigured && firestoreDb && firebaseAuth?.currentUser) {
+      try {
+        const [
+          tribbusSnap,
+          tippisSnap,
+          feuxSnap,
+          canauxSnap,
+          rolesSnap,
+          profilesSnap,
+        ] = await Promise.all([
+          getDocs(
+            query(
+              collection(firestoreDb, 'tribbus'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+          getDocs(
+            query(
+              collection(firestoreDb, 'tippis'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+          getDocs(
+            query(
+              collection(firestoreDb, 'feux_de_camp'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+          getDocs(
+            query(
+              collection(firestoreDb, 'canaux'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+          getDocs(
+            query(
+              collection(firestoreDb, 'membres_roles'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+          getDocs(collection(firestoreDb, 'profiles')),
+        ]);
+
+        const remoteTribbus = tribbusSnap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<Tribbu, 'id'>) })
+        );
+        const remoteTippis = tippisSnap.docs.map(
+          (d) => ({
+            ...(d.data() as Omit<Tippi, 'id'>),
+            id: d.id,
+          })
+        );
+        const remoteFeux = feuxSnap.docs.map(
+          (d) => ({
+            ...(d.data() as Omit<FeuDeCamp, 'id'>),
+            id: d.id,
+          })
+        );
+        const remoteCanaux = canauxSnap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<Canal, 'id'>) })
+        );
+        const remoteRoles = rolesSnap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<MembreRole, 'id'>) })
+        );
+        const remoteProfiles = profilesSnap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<Profile, 'id'>) })
+        );
+
+        const tribbus = mergeById(localTribbus, remoteTribbus);
+        const tippis = mergeById(localTippis, remoteTippis);
+        const feuxDeCamp = mergeById(localFeux, remoteFeux);
+        const canaux = mergeById(localCanaux, remoteCanaux);
+        const membresRoles = mergeById(localRoles, remoteRoles);
+        const allProfiles = mergeById(mergedLocalProfiles, remoteProfiles);
+
+        const memberUserIds = new Set<string>([activeGt.manitou_id]);
+        membresRoles.forEach((mr) => {
+          if (mr.user_id && mr.status !== 'REJECTED') {
+            memberUserIds.add(mr.user_id);
+          }
+        });
+
+        const isolatedProfiles = allProfiles.filter(
+          (p) =>
+            memberUserIds.has(p.id) || p.grande_tribbu_ids?.includes(gtId)
+        );
+
+        return {
+          grandeTribbu: activeGt,
+          allAssociations,
+          tribbus,
+          tippis,
+          feuxDeCamp,
+          canaux,
+          membresRoles,
+          profiles: isolatedProfiles,
+        };
+      } catch {
+        // Si les règles Firestore ne sont pas encore publiées dans la console,
+        // repli transparent sur les données locales de l'association.
       }
     }
 
     const memberUserIds = new Set<string>([activeGt.manitou_id]);
-    membresRoles.forEach((r) => {
+    localRoles.forEach((r) => {
       if (r.user_id && r.status !== 'REJECTED') {
         memberUserIds.add(r.user_id);
       }
     });
 
-    const isolatedProfiles = mergedProfiles.filter(
+    const isolatedProfiles = mergedLocalProfiles.filter(
       (p) =>
         memberUserIds.has(p.id) || p.grande_tribbu_ids?.includes(gtId)
     );
@@ -283,11 +299,11 @@ export const chatService = {
     return {
       grandeTribbu: activeGt,
       allAssociations,
-      tribbus,
-      tippis,
-      feuxDeCamp,
-      canaux,
-      membresRoles,
+      tribbus: localTribbus,
+      tippis: localTippis,
+      feuxDeCamp: localFeux,
+      canaux: localCanaux,
+      membresRoles: localRoles,
       profiles: isolatedProfiles,
     };
   },
@@ -299,6 +315,7 @@ export const chatService = {
     targetSlug?: string | null,
     canalId?: string
   ): Promise<ChatMessage[]> {
+    if (!targetSlug) return [];
     const hierarchy = await this.fetchHierarchy(targetSlug);
     if (!hierarchy.grandeTribbu) return [];
 
@@ -306,88 +323,108 @@ export const chatService = {
     const validCanalIds = new Set(hierarchy.canaux.map((c) => c.id));
     const profileMap = new Map(hierarchy.profiles.map((p) => [p.id, p]));
 
-    if (isFirebaseConfigured && firestoreDb) {
-      const msgCol = collection(firestoreDb, 'messages');
-      const msgQuery = canalId
-        ? query(
-            msgCol,
-            where('canal_id', '==', canalId),
-            orderBy('created_at', 'asc')
-          )
-        : query(
-            msgCol,
-            where('grande_tribbu_id', '==', gtId),
-            orderBy('created_at', 'asc')
-          );
-
-      const [msgSnap, emargementSnap] = await Promise.all([
-        getDocs(msgQuery),
-        getDocs(
-          query(
-            collection(firestoreDb, 'emargements'),
-            where('grande_tribbu_id', '==', gtId)
-          )
-        ),
-      ]);
-
-      const rawMessages = msgSnap.docs
-        .map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<ChatMessage, 'id' | 'emargements'>),
-        }))
-        .filter((m) => validCanalIds.has(m.canal_id));
-
-      const rawEmargements = emargementSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Emargement, 'id'>),
-      }));
-
-      const msgMap = new Map(rawMessages.map((m) => [m.id, m]));
-
-      return rawMessages.map((m) => {
-        const author = profileMap.get(m.author_id);
-        const replyParent = m.reply_to_message_id
-          ? msgMap.get(m.reply_to_message_id)
-          : null;
-        const replyAuthor = replyParent
-          ? profileMap.get(replyParent.author_id)
-          : null;
-
-        const msgEmargements: Emargement[] = rawEmargements
-          .filter((e) => e.message_id === m.id)
-          .map((e) => ({
-            ...e,
-            user: profileMap.get(e.user_id),
-          }));
-
-        return {
-          ...m,
-          author,
-          reply_to_message:
-            m.reply_to_message ||
-            (replyParent
-              ? {
-                  id: replyParent.id,
-                  author_name: replyAuthor?.display_name || 'Membre',
-                  content: replyParent.content,
-                }
-              : null),
-          attachments: Array.isArray(m.attachments) ? m.attachments : [],
-          emargements: msgEmargements,
-        };
-      });
-    }
-
-    const stored = readLocal<ChatMessage[]>(
+    const localStored = readLocal<ChatMessage[]>(
       STORAGE_KEYS.MESSAGES,
       DEMO_MESSAGES
-    );
-    const filtered = stored.filter(
+    ).filter(
       (m) =>
         validCanalIds.has(m.canal_id) && (!canalId || m.canal_id === canalId)
     );
 
-    return filtered.map((m) => ({
+    if (isFirebaseConfigured && firestoreDb && firebaseAuth?.currentUser) {
+      try {
+        const msgCol = collection(firestoreDb, 'messages');
+        const msgQuery = canalId
+          ? query(
+              msgCol,
+              where('canal_id', '==', canalId),
+              orderBy('created_at', 'asc')
+            )
+          : query(
+              msgCol,
+              where('grande_tribbu_id', '==', gtId),
+              orderBy('created_at', 'asc')
+            );
+
+        const [msgSnap, emargementSnap] = await Promise.all([
+          getDocs(msgQuery),
+          getDocs(
+            query(
+              collection(firestoreDb, 'emargements'),
+              where('grande_tribbu_id', '==', gtId)
+            )
+          ),
+        ]);
+
+        const remoteMessages = msgSnap.docs
+          .map((d) => ({
+            id: d.id,
+            emargements: [] as Emargement[],
+            ...(d.data() as Omit<ChatMessage, 'id' | 'emargements'>),
+          }))
+          .filter((m) => validCanalIds.has(m.canal_id));
+
+        const rawEmargements = emargementSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Emargement, 'id'>),
+        }));
+
+        const mergedMessages = mergeById(localStored, remoteMessages).sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        const msgMap = new Map(mergedMessages.map((m) => [m.id, m]));
+
+        return mergedMessages.map((m) => {
+          const author = profileMap.get(m.author_id);
+          const replyParent = m.reply_to_message_id
+            ? msgMap.get(m.reply_to_message_id)
+            : null;
+          const replyAuthor = replyParent
+            ? profileMap.get(replyParent.author_id)
+            : null;
+
+          const remoteEmargements: Emargement[] = rawEmargements
+            .filter((e) => e.message_id === m.id)
+            .map((e) => ({
+              ...e,
+              user: profileMap.get(e.user_id),
+            }));
+
+          const localEmargements: Emargement[] = (m.emargements || []).map(
+            (e) => ({
+              ...e,
+              user: profileMap.get(e.user_id),
+            })
+          );
+
+          const msgEmargements = mergeById(
+            localEmargements,
+            remoteEmargements
+          );
+
+          return {
+            ...m,
+            author,
+            reply_to_message:
+              m.reply_to_message ||
+              (replyParent
+                ? {
+                    id: replyParent.id,
+                    author_name: replyAuthor?.display_name || 'Membre',
+                    content: replyParent.content,
+                  }
+                : null),
+            attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            emargements: msgEmargements,
+          };
+        });
+      } catch {
+        // Repli sur les messages locaux si l'index composite ou les règles Firestore ne sont pas encore prêts
+      }
+    }
+
+    return localStored.map((m) => ({
       ...m,
       author: profileMap.get(m.author_id),
       emargements: (m.emargements || []).map((em) => ({
@@ -451,32 +488,6 @@ export const chatService = {
       updated_at: nowIso,
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      await setDoc(doc(firestoreDb, 'messages', messageId), {
-        id: messageId,
-        grande_tribbu_id: grandeTribbuId,
-        canal_id: canalId,
-        author_id: authorId,
-        content,
-        reply_to_message_id: replyToMessageId,
-        reply_to_message: replyToPreview,
-        quoted_excerpt: quotedExcerpt,
-        mentioned_user_ids: mentionedUserIds,
-        mentioned_names: mentionedNames,
-        attachments,
-        created_at: nowIso,
-        updated_at: nowIso,
-      });
-
-      await setDoc(
-        doc(firestoreDb, 'canaux', canalId),
-        { last_message_at: nowIso },
-        { merge: true }
-      );
-
-      return newMessage;
-    }
-
     const allMessages = readLocal<ChatMessage[]>(
       STORAGE_KEYS.MESSAGES,
       DEMO_MESSAGES
@@ -491,6 +502,34 @@ export const chatService = {
       )
     );
 
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'messages', messageId), {
+          id: messageId,
+          grande_tribbu_id: grandeTribbuId,
+          canal_id: canalId,
+          author_id: authorId,
+          content,
+          reply_to_message_id: replyToMessageId,
+          reply_to_message: replyToPreview,
+          quoted_excerpt: quotedExcerpt,
+          mentioned_user_ids: mentionedUserIds,
+          mentioned_names: mentionedNames,
+          attachments,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+
+        await setDoc(
+          doc(firestoreDb, 'canaux', canalId),
+          { last_message_at: nowIso },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('[Tribbu Firebase] Message sauvegardé localement :', err);
+      }
+    }
+
     notifyRealtimeListeners('message:inserted', newMessage);
     return newMessage;
   },
@@ -504,18 +543,7 @@ export const chatService = {
     userId: string
   ): Promise<void> {
     const nowIso = new Date().toISOString();
-
-    if (isFirebaseConfigured && firestoreDb) {
-      const emId = `${messageId}_${userId}`;
-      await setDoc(doc(firestoreDb, 'emargements', emId), {
-        id: emId,
-        grande_tribbu_id: grandeTribbuId,
-        message_id: messageId,
-        user_id: userId,
-        confirmed_at: nowIso,
-      });
-      return;
-    }
+    const emId = `${messageId}_${userId}`;
 
     const allMessages = readLocal<ChatMessage[]>(
       STORAGE_KEYS.MESSAGES,
@@ -533,7 +561,7 @@ export const chatService = {
         emargements: [
           ...msg.emargements,
           {
-            id: `em-${crypto.randomUUID().slice(0, 8)}`,
+            id: emId,
             grande_tribbu_id: grandeTribbuId,
             message_id: messageId,
             user_id: userId,
@@ -544,6 +572,21 @@ export const chatService = {
     });
 
     writeLocal(STORAGE_KEYS.MESSAGES, updated);
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'emargements', emId), {
+          id: emId,
+          grande_tribbu_id: grandeTribbuId,
+          message_id: messageId,
+          user_id: userId,
+          confirmed_at: nowIso,
+        });
+      } catch {
+        // Repli local déjà enregistré
+      }
+    }
+
     notifyRealtimeListeners('emargement:confirmed', { messageId, userId });
   },
 
@@ -597,23 +640,24 @@ export const chatService = {
       created_at: nowIso,
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      await Promise.all([
-        setDoc(doc(firestoreDb, 'tribbus', tribbuId), {
-          ...newTribbu,
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'canaux', annoncesCanal.id), annoncesCanal),
-        setDoc(doc(firestoreDb, 'canaux', agoraCanal.id), agoraCanal),
-      ]);
-      return { tribbu: newTribbu, agoraCanal };
-    }
-
     const tribbus = readLocal<Tribbu[]>(STORAGE_KEYS.TRIBBUS, DEMO_TRIBBUS);
     writeLocal(STORAGE_KEYS.TRIBBUS, [...tribbus, newTribbu]);
 
     const canaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
     writeLocal(STORAGE_KEYS.CANAUX, [...canaux, annoncesCanal, agoraCanal]);
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'tribbus', tribbuId), {
+          ...newTribbu,
+          updated_at: nowIso,
+        });
+        await setDoc(doc(firestoreDb, 'canaux', annoncesCanal.id), annoncesCanal);
+        await setDoc(doc(firestoreDb, 'canaux', agoraCanal.id), agoraCanal);
+      } catch (err) {
+        console.warn('[Tribbu Firebase] Tribbu sauvegardée localement :', err);
+      }
+    }
 
     notifyRealtimeListeners('hierarchy:updated');
     return { tribbu: newTribbu, agoraCanal };
@@ -660,22 +704,23 @@ export const chatService = {
       created_at: nowIso,
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      await Promise.all([
-        setDoc(doc(firestoreDb, 'tippis', tippiId), {
-          ...newTippi,
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'canaux', newCanal.id), newCanal),
-      ]);
-      return { tippi: newTippi, canal: newCanal };
-    }
-
     const tippis = readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS);
     writeLocal(STORAGE_KEYS.TIPPIS, [...tippis, newTippi]);
 
     const canaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
     writeLocal(STORAGE_KEYS.CANAUX, [...canaux, newCanal]);
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'tippis', tippiId), {
+          ...newTippi,
+          updated_at: nowIso,
+        });
+        await setDoc(doc(firestoreDb, 'canaux', newCanal.id), newCanal);
+      } catch (err) {
+        console.warn('[Tribbu Firebase] Tippi sauvegardé localement :', err);
+      }
+    }
 
     notifyRealtimeListeners('hierarchy:updated');
     return { tippi: newTippi, canal: newCanal };
@@ -722,22 +767,26 @@ export const chatService = {
       created_at: nowIso,
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      await Promise.all([
-        setDoc(doc(firestoreDb, 'feux_de_camp', fdcId), {
-          ...newFeu,
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'canaux', newCanal.id), newCanal),
-      ]);
-      return { feuDeCamp: newFeu, canal: newCanal };
-    }
-
     const feux = readLocal<FeuDeCamp[]>(STORAGE_KEYS.FEUX, DEMO_FEUX_DE_CAMP);
     writeLocal(STORAGE_KEYS.FEUX, [...feux, newFeu]);
 
     const canaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
     writeLocal(STORAGE_KEYS.CANAUX, [...canaux, newCanal]);
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'feux_de_camp', fdcId), {
+          ...newFeu,
+          updated_at: nowIso,
+        });
+        await setDoc(doc(firestoreDb, 'canaux', newCanal.id), newCanal);
+      } catch (err) {
+        console.warn(
+          '[Tribbu Firebase] Feu de camp sauvegardé localement :',
+          err
+        );
+      }
+    }
 
     notifyRealtimeListeners('hierarchy:updated');
     return { feuDeCamp: newFeu, canal: newCanal };
@@ -783,21 +832,24 @@ export const chatService = {
       created_at: nowIso,
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      await setDoc(doc(firestoreDb, 'membres_roles', inviteId), {
-        ...newInvite,
-        updated_at: nowIso,
-      });
-      return { invitation: newInvite, invitationUrl };
-    }
-
     const roles = readLocal<MembreRole[]>(
       STORAGE_KEYS.ROLES,
       DEMO_MEMBRES_ROLES
     );
     writeLocal(STORAGE_KEYS.ROLES, [...roles, newInvite]);
-    notifyRealtimeListeners('hierarchy:updated');
 
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(doc(firestoreDb, 'membres_roles', inviteId), {
+          ...newInvite,
+          updated_at: nowIso,
+        });
+      } catch (err) {
+        console.warn('[Tribbu Firebase] Invitation sauvegardée localement :', err);
+      }
+    }
+
+    notifyRealtimeListeners('hierarchy:updated');
     return { invitation: newInvite, invitationUrl };
   },
 
@@ -809,15 +861,6 @@ export const chatService = {
     role: TribbuRole;
     status?: 'ACTIVE' | 'REJECTED';
   }): Promise<void> {
-    if (isFirebaseConfigured && firestoreDb) {
-      await updateDoc(doc(firestoreDb, 'membres_roles', params.roleRecordId), {
-        role: params.role,
-        ...(params.status ? { status: params.status } : {}),
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
     const roles = readLocal<MembreRole[]>(
       STORAGE_KEYS.ROLES,
       DEMO_MEMBRES_ROLES
@@ -832,6 +875,19 @@ export const chatService = {
         : r
     );
     writeLocal(STORAGE_KEYS.ROLES, updated);
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await updateDoc(doc(firestoreDb, 'membres_roles', params.roleRecordId), {
+          role: params.role,
+          ...(params.status ? { status: params.status } : {}),
+          updated_at: new Date().toISOString(),
+        });
+      } catch {
+        // Repli local déjà effectué
+      }
+    }
+
     notifyRealtimeListeners('hierarchy:updated');
   },
 
@@ -846,34 +902,7 @@ export const chatService = {
     assignedBy: string;
   }): Promise<void> {
     const nowIso = new Date().toISOString();
-
-    if (isFirebaseConfigured && firestoreDb) {
-      const roleId = `mr-${params.userId}_${params.tribbuId}`;
-      await setDoc(
-        doc(firestoreDb, 'membres_roles', roleId),
-        {
-          id: roleId,
-          user_id: params.userId,
-          invited_email: null,
-          role: params.role,
-          grande_tribbu_id: params.grandeTribbuId,
-          tribbu_id: params.tribbuId,
-          status: 'ACTIVE',
-          invitation_token: null,
-          invited_by: params.assignedBy,
-          created_at: nowIso,
-          updated_at: nowIso,
-        },
-        { merge: true }
-      );
-      await authService.syncUserTribbuClaimsInFirestore(
-        params.userId,
-        params.grandeTribbuId,
-        params.tribbuId,
-        params.role
-      );
-      return;
-    }
+    const roleId = `mr-${params.userId}_${params.tribbuId}`;
 
     const roles = readLocal<MembreRole[]>(
       STORAGE_KEYS.ROLES,
@@ -884,7 +913,7 @@ export const chatService = {
     );
     if (!exists) {
       roles.push({
-        id: `mr-${crypto.randomUUID().slice(0, 8)}`,
+        id: roleId,
         user_id: params.userId,
         invited_email: null,
         role: params.role,
@@ -896,7 +925,38 @@ export const chatService = {
         created_at: nowIso,
       });
       writeLocal(STORAGE_KEYS.ROLES, roles);
-      notifyRealtimeListeners('hierarchy:updated');
     }
+
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        await setDoc(
+          doc(firestoreDb, 'membres_roles', roleId),
+          {
+            id: roleId,
+            user_id: params.userId,
+            invited_email: null,
+            role: params.role,
+            grande_tribbu_id: params.grandeTribbuId,
+            tribbu_id: params.tribbuId,
+            status: 'ACTIVE',
+            invitation_token: null,
+            invited_by: params.assignedBy,
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+          { merge: true }
+        );
+        await authService.syncUserTribbuClaimsInFirestore(
+          params.userId,
+          params.grandeTribbuId,
+          params.tribbuId,
+          params.role
+        );
+      } catch {
+        // Repli local déjà enregistré
+      }
+    }
+
+    notifyRealtimeListeners('hierarchy:updated');
   },
 };

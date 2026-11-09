@@ -164,6 +164,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           hierarchy.grandeTribbu?.manitou_id
         )
       );
+    } catch (err) {
+      console.warn('[Tribbu Auth] Rafraîchissement partiel :', err);
     } finally {
       setIsLoading(false);
     }
@@ -172,17 +174,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     void refreshAuth();
 
-    if (isFirebaseConfigured && firebaseAuth) {
-      const unsubscribe = onAuthStateChanged(firebaseAuth, () => {
-        void refreshAuth();
-      });
-      return () => unsubscribe();
-    }
-
     const handleLocalMutation = () => {
-      void refreshAuth();
+      if (!authService.isProvisioning) {
+        void refreshAuth();
+      }
     };
     window.addEventListener('tribbu-local-mutation', handleLocalMutation);
+
+    if (isFirebaseConfigured && firebaseAuth) {
+      const unsubscribe = onAuthStateChanged(firebaseAuth, () => {
+        if (!authService.isProvisioning) {
+          void refreshAuth();
+        }
+      });
+      return () => {
+        unsubscribe();
+        window.removeEventListener('tribbu-local-mutation', handleLocalMutation);
+      };
+    }
+
     return () =>
       window.removeEventListener('tribbu-local-mutation', handleLocalMutation);
   }, [refreshAuth, activeSlug]);

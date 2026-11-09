@@ -1,14 +1,18 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { firestoreDb, isFirebaseConfigured } from '@/lib/firebaseClient';
 import { QUERY_KEYS } from './useChat';
 
 /**
- * Souscrit aux changements temps réel Cloud Firestore (`onSnapshot`) et au BroadcastChannel local
- * pour synchroniser instantanément les messages, émargements, canaux et rôles.
+ * Souscrit aux changements temps réel Cloud Firestore (`onSnapshot` filtré par `grande_tribbu_id`)
+ * et au BroadcastChannel local uniquement lorsque l'utilisateur est authentifié sur une association active.
  */
-export function useRealtimeChannel(activeCanalId: string | null) {
+export function useRealtimeChannel(
+  activeGrandeTribbuId: string | null,
+  activeCanalId: string | null,
+  isAuthenticated = false
+) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -22,48 +26,12 @@ export function useRealtimeChannel(activeCanalId: string | null) {
       }
     };
 
-    if (isFirebaseConfigured && firestoreDb) {
-      const unsubMessages = onSnapshot(
-        collection(firestoreDb, 'messages'),
-        refreshQueries
-      );
-      const unsubEmargements = onSnapshot(
-        collection(firestoreDb, 'emargements'),
-        refreshQueries
-      );
-      const unsubCanaux = onSnapshot(
-        collection(firestoreDb, 'canaux'),
-        refreshQueries
-      );
-      const unsubTribbus = onSnapshot(
-        collection(firestoreDb, 'tribbus'),
-        refreshQueries
-      );
-      const unsubTippis = onSnapshot(
-        collection(firestoreDb, 'tippis'),
-        refreshQueries
-      );
-      const unsubFeux = onSnapshot(
-        collection(firestoreDb, 'feux_de_camp'),
-        refreshQueries
-      );
-      const unsubRoles = onSnapshot(
-        collection(firestoreDb, 'membres_roles'),
-        refreshQueries
-      );
+    const handleSnapshotError = () => {
+      // Ignore silencieusement les erreurs de permission transitoires ou lorsque
+      // les règles Firestore de la console n'ont pas encore été publiées.
+    };
 
-      return () => {
-        unsubMessages();
-        unsubEmargements();
-        unsubCanaux();
-        unsubTribbus();
-        unsubTippis();
-        unsubFeux();
-        unsubRoles();
-      };
-    }
-
-    // Mode local / multi-onglets via BroadcastChannel et événements DOM
+    // Synchronisation locale / multi-onglets toujours active
     const bc =
       'BroadcastChannel' in window
         ? new BroadcastChannel('tribbu-realtime-sync')
@@ -75,9 +43,87 @@ export function useRealtimeChannel(activeCanalId: string | null) {
 
     window.addEventListener('tribbu-local-mutation', refreshQueries);
 
+    // N'ouvre les listeners temps réel Firestore que si un membre est authentifié sur une association active
+    let cleanupFirestore: (() => void) | null = null;
+
+    if (
+      isFirebaseConfigured &&
+      firestoreDb &&
+      isAuthenticated &&
+      activeGrandeTribbuId
+    ) {
+      const unsubMessages = onSnapshot(
+        query(
+          collection(firestoreDb, 'messages'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubEmargements = onSnapshot(
+        query(
+          collection(firestoreDb, 'emargements'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubCanaux = onSnapshot(
+        query(
+          collection(firestoreDb, 'canaux'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubTribbus = onSnapshot(
+        query(
+          collection(firestoreDb, 'tribbus'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubTippis = onSnapshot(
+        query(
+          collection(firestoreDb, 'tippis'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubFeux = onSnapshot(
+        query(
+          collection(firestoreDb, 'feux_de_camp'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+      const unsubRoles = onSnapshot(
+        query(
+          collection(firestoreDb, 'membres_roles'),
+          where('grande_tribbu_id', '==', activeGrandeTribbuId)
+        ),
+        refreshQueries,
+        handleSnapshotError
+      );
+
+      cleanupFirestore = () => {
+        unsubMessages();
+        unsubEmargements();
+        unsubCanaux();
+        unsubTribbus();
+        unsubTippis();
+        unsubFeux();
+        unsubRoles();
+      };
+    }
+
     return () => {
+      cleanupFirestore?.();
       bc?.close();
       window.removeEventListener('tribbu-local-mutation', refreshQueries);
     };
-  }, [activeCanalId, queryClient]);
+  }, [activeGrandeTribbuId, activeCanalId, isAuthenticated, queryClient]);
 }

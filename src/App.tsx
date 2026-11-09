@@ -43,8 +43,6 @@ export const App: React.FC = () => {
     useHierarchy(activeSlug);
   const { data: allMessages = [] } = useAllMessages(activeSlug);
 
-  useRealtimeChannel(activeCanalId);
-
   const canaux = hierarchy?.canaux ?? [];
   const tribbus = hierarchy?.tribbus ?? [];
   const tippis = hierarchy?.tippis ?? [];
@@ -52,6 +50,12 @@ export const App: React.FC = () => {
   const membresRoles = hierarchy?.membresRoles ?? [];
   const profiles = hierarchy?.profiles ?? [];
   const grandeTribbu = hierarchy?.grandeTribbu || activeAssociation;
+
+  useRealtimeChannel(
+    grandeTribbu?.id || null,
+    activeCanalId,
+    Boolean(user && isMemberOfActiveAssociation)
+  );
 
   const {
     accessibleCanaux,

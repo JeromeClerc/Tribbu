@@ -61,6 +61,12 @@ function writeLocal<T>(key: string, value: T): void {
   }
 }
 
+function isAuthEmailInUseError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = (err as { code?: string }).code || '';
+  return code === 'auth/email-already-in-use';
+}
+
 export interface CreateAssociationParams {
   // Compte du 1er membre (futur Grand Manitou)
   email: string;
@@ -78,19 +84,37 @@ export interface CreateAssociationParams {
 
 export const authService = {
   /**
-   * Récupère toutes les associations existantes (pour résolution de slug d'URL).
+   * Indique qu'une création initiale d'association ou d'invitation est en cours
+   * pour éviter que `onAuthStateChanged` ne déclenche des requêtes avant la fin des écritures.
+   */
+  isProvisioning: false,
+
+  /**
+   * Récupère toutes les associations existantes (fusionnant Cloud Firestore et le cache local).
    */
   async listAssociations(): Promise<GrandeTribbu[]> {
+    const localAssociations = readLocal<GrandeTribbu[]>(
+      ASSOCIATIONS_STORAGE_KEY,
+      [DEMO_GRANDE_TRIBBU]
+    );
+
     if (isFirebaseConfigured && firestoreDb) {
-      const snap = await getDocs(collection(firestoreDb, 'grande_tribbu'));
-      return snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Omit<GrandeTribbu, 'id'>) })
-      );
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'grande_tribbu'));
+        const remoteAssociations = snap.docs.map(
+          (d) => ({ id: d.id, ...(d.data() as Omit<GrandeTribbu, 'id'>) })
+        );
+        const mergedMap = new Map<string, GrandeTribbu>();
+        for (const a of localAssociations) mergedMap.set(a.slug, a);
+        for (const a of remoteAssociations) mergedMap.set(a.slug, a);
+        return Array.from(mergedMap.values());
+      } catch {
+        // Si les règles Firestore bloquent la lecture avant connexion, repli sur le cache local
+        return localAssociations;
+      }
     }
 
-    return readLocal<GrandeTribbu[]>(ASSOCIATIONS_STORAGE_KEY, [
-      DEMO_GRANDE_TRIBBU,
-    ]);
+    return localAssociations;
   },
 
   /**
@@ -101,63 +125,96 @@ export const authService = {
     if (!cleanSlug) return null;
 
     if (isFirebaseConfigured && firestoreDb) {
-      const q = query(
-        collection(firestoreDb, 'grande_tribbu'),
-        where('slug', '==', cleanSlug)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) return null;
-      const docSnap = snap.docs[0];
-      return {
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<GrandeTribbu, 'id'>),
-      };
+      try {
+        const q = query(
+          collection(firestoreDb, 'grande_tribbu'),
+          where('slug', '==', cleanSlug)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docSnap = snap.docs[0];
+          return {
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<GrandeTribbu, 'id'>),
+          };
+        }
+      } catch {
+        // Repli sur la liste locale si Firestore refuse la requête non authentifiée
+      }
     }
 
-    const list = await this.listAssociations();
-    return list.find((a) => a.slug === cleanSlug) || null;
+    const localAssociations = readLocal<GrandeTribbu[]>(
+      ASSOCIATIONS_STORAGE_KEY,
+      [DEMO_GRANDE_TRIBBU]
+    );
+    return localAssociations.find((a) => a.slug === cleanSlug) || null;
   },
 
   /**
-   * Récupère le profil de l'utilisateur courant depuis Cloud Firestore (ou profil démo actif).
+   * Récupère le profil de l'utilisateur courant depuis Cloud Firestore (ou profil local actif).
    */
   async getCurrentProfile(): Promise<Profile | null> {
+    const savedId = localStorage.getItem(DEMO_USER_STORAGE_KEY);
+    const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
+    const allLocalProfiles = [...DEMO_PROFILES, ...customProfiles];
+
     if (isFirebaseConfigured && firebaseAuth && firestoreDb) {
       const fbUser = firebaseAuth.currentUser;
-      if (!fbUser) return null;
-
-      const profRef = doc(firestoreDb, 'profiles', fbUser.uid);
-      const snap = await getDoc(profRef);
-
-      if (snap.exists()) {
-        return { id: snap.id, ...(snap.data() as Omit<Profile, 'id'>) };
+      if (!fbUser) {
+        if (savedId && savedId !== 'logged-out') {
+          return allLocalProfiles.find((p) => p.id === savedId) || null;
+        }
+        return null;
       }
 
-      const fallbackProfile: Profile = {
-        id: fbUser.uid,
-        email: fbUser.email || '',
-        display_name:
-          fbUser.displayName || fbUser.email?.split('@')[0] || 'Membre Tribbu',
-        avatar_url: fbUser.photoURL || null,
-        phone_number: null,
-        sms_notifications_enabled: false,
-        grande_tribbu_ids: [],
-        last_seen_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-      };
+      const localMatch = allLocalProfiles.find((p) => p.id === fbUser.uid);
 
-      await setDoc(profRef, fallbackProfile, { merge: true });
-      return fallbackProfile;
+      try {
+        const profRef = doc(firestoreDb, 'profiles', fbUser.uid);
+        const snap = await getDoc(profRef);
+
+        if (snap.exists()) {
+          return { id: snap.id, ...(snap.data() as Omit<Profile, 'id'>) };
+        }
+
+        if (localMatch) {
+          return localMatch;
+        }
+
+        const fallbackProfile: Profile = {
+          id: fbUser.uid,
+          email: fbUser.email || '',
+          display_name:
+            fbUser.displayName || fbUser.email?.split('@')[0] || 'Membre Tribbu',
+          avatar_url: fbUser.photoURL || null,
+          phone_number: null,
+          sms_notifications_enabled: false,
+          grande_tribbu_ids: [],
+          last_seen_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        };
+
+        await setDoc(profRef, fallbackProfile, { merge: true });
+        return fallbackProfile;
+      } catch {
+        if (localMatch) return localMatch;
+        return {
+          id: fbUser.uid,
+          email: fbUser.email || '',
+          display_name:
+            fbUser.displayName || fbUser.email?.split('@')[0] || 'Membre Tribbu',
+          avatar_url: fbUser.photoURL || null,
+          phone_number: null,
+          sms_notifications_enabled: false,
+          grande_tribbu_ids: [],
+          last_seen_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        };
+      }
     }
 
-    const savedId = localStorage.getItem(DEMO_USER_STORAGE_KEY);
-    // Si aucune session active n'est démarrée ou si déconnecté, retourne null pour afficher la page initiale
     if (!savedId || savedId === 'logged-out') return null;
-
-    const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
-    const allProfiles = [...DEMO_PROFILES, ...customProfiles];
-
-    return allProfiles.find((p) => p.id === savedId) || null;
+    return allLocalProfiles.find((p) => p.id === savedId) || null;
   },
 
   /**
@@ -185,28 +242,42 @@ export const authService = {
       );
     }
 
-    // Vérifie que le slug n'est pas déjà pris par une autre association
-    const existingWithSlug = await this.getAssociationBySlug(finalSlug);
-    if (existingWithSlug) {
-      throw new Error(
-        `L'URL "/${finalSlug}" est déjà utilisée par une autre association. Veuillez personnaliser le slug.`
-      );
-    }
-
     const gtId = `gt-${crypto.randomUUID().slice(0, 8)}`;
+    let userId = `user-${crypto.randomUUID().slice(0, 8)}`;
 
-    if (isFirebaseConfigured && firebaseAuth && firestoreDb) {
-      const cred = await createUserWithEmailAndPassword(
-        firebaseAuth,
-        params.email.trim(),
-        params.password
-      );
-      await updateProfile(cred.user, {
-        displayName: params.displayName.trim(),
-      });
+    this.isProvisioning = true;
 
+    try {
+      // 1. Authentification Firebase Auth EN PREMIER (avant toute requête Firestore)
+      if (isFirebaseConfigured && firebaseAuth) {
+        try {
+          const cred = await createUserWithEmailAndPassword(
+            firebaseAuth,
+            params.email.trim(),
+            params.password
+          );
+          userId = cred.user.uid;
+          await updateProfile(cred.user, {
+            displayName: params.displayName.trim(),
+          });
+        } catch (authErr) {
+          // Si le compte Auth a déjà été créé lors d'un clic précédent, on connecte directement l'utilisateur
+          if (isAuthEmailInUseError(authErr)) {
+            const cred = await signInWithEmailAndPassword(
+              firebaseAuth,
+              params.email.trim(),
+              params.password
+            );
+            userId = cred.user.uid;
+          } else {
+            throw authErr;
+          }
+        }
+      }
+
+      // 2. Préparation des entités de l'association et du Grand Manitou
       const newProfile: Profile = {
-        id: cred.user.uid,
+        id: userId,
         email: params.email.trim(),
         display_name: params.displayName.trim(),
         avatar_url: null,
@@ -226,7 +297,7 @@ export const authService = {
         contact_phone: params.contactPhone?.trim() || null,
         contact_email: params.contactEmail?.trim() || null,
         logo_url: '/Tribbu_logo.png',
-        manitou_id: cred.user.uid,
+        manitou_id: userId,
         settings: {
           allow_pygmee_feux_de_camp: true,
           require_emargement_on_annonces: true,
@@ -263,170 +334,114 @@ export const authService = {
 
       const manitouRole: MembreRole = {
         id: `mr-${gtId}-manitou`,
-        user_id: cred.user.uid,
+        user_id: userId,
         invited_email: newProfile.email,
         role: 'MANITOU',
         grande_tribbu_id: gtId,
         tribbu_id: null,
         status: 'ACTIVE',
         invitation_token: null,
-        invited_by: cred.user.uid,
+        invited_by: userId,
         created_at: nowIso,
       };
 
       const welcomeMsgId = `msg-${gtId}-welcome`;
-      const welcomeMsg = {
+      const welcomeMsg: ChatMessage = {
         id: welcomeMsgId,
         grande_tribbu_id: gtId,
         canal_id: annoncesCanal.id,
-        author_id: cred.user.uid,
+        author_id: userId,
         content: `🎉 Bienvenue dans l'espace collaboratif officiel de **${cleanName}** !\n\nEn tant que **Grand Manitou**, vous pouvez dès maintenant :\n1. Créer vos premières **Tribbus** (commissions / groupes) via le bouton **+** dans la barre latérale gauche.\n2. Inviter les membres de votre association par e-mail via le bouton **Inviter** en haut à droite.\n\n🔗 Lien direct de connexion à votre association : ${window.location.origin}/${finalSlug}`,
         reply_to_message_id: null,
         quoted_excerpt: null,
-        mentioned_user_ids: [cred.user.uid],
+        mentioned_user_ids: [userId],
         mentioned_names: [newProfile.display_name],
         attachments: [],
+        emargements: [],
         created_at: nowIso,
         updated_at: nowIso,
       };
 
-      await Promise.all([
-        setDoc(doc(firestoreDb, 'profiles', cred.user.uid), {
-          ...newProfile,
-          global_role: 'MANITOU',
-          tribbu_ids: [],
-          chef_tribbu_ids: [],
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'grande_tribbu', gtId), {
-          ...newAssociation,
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'canaux', annoncesCanal.id), annoncesCanal),
-        setDoc(doc(firestoreDb, 'canaux', agoraCanal.id), agoraCanal),
-        setDoc(doc(firestoreDb, 'membres_roles', manitouRole.id), {
-          ...manitouRole,
-          updated_at: nowIso,
-        }),
-        setDoc(doc(firestoreDb, 'messages', welcomeMsgId), welcomeMsg),
+      // 3. Sauvegarde immédiate dans le cache local (garantit la disponibilité instantanée)
+      const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
+      writeLocal(PROFILES_STORAGE_KEY, [
+        ...customProfiles.filter((p) => p.id !== userId),
+        newProfile,
       ]);
 
+      const associations = readLocal<GrandeTribbu[]>(ASSOCIATIONS_STORAGE_KEY, [
+        DEMO_GRANDE_TRIBBU,
+      ]);
+      writeLocal(ASSOCIATIONS_STORAGE_KEY, [
+        ...associations.filter((a) => a.slug !== finalSlug),
+        newAssociation,
+      ]);
+
+      const canaux = readLocal<Canal[]>(CANAUX_STORAGE_KEY, DEMO_CANAUX);
+      writeLocal(CANAUX_STORAGE_KEY, [...canaux, annoncesCanal, agoraCanal]);
+
+      const roles = readLocal<MembreRole[]>(
+        ROLES_STORAGE_KEY,
+        DEMO_MEMBRES_ROLES
+      );
+      writeLocal(ROLES_STORAGE_KEY, [...roles, manitouRole]);
+
+      const messages = readLocal<ChatMessage[]>(
+        MESSAGES_STORAGE_KEY,
+        DEMO_MESSAGES
+      );
+      writeLocal(MESSAGES_STORAGE_KEY, [...messages, welcomeMsg]);
+
+      localStorage.setItem(DEMO_USER_STORAGE_KEY, newProfile.id);
+
+      // 4. Écriture SÉQUENTIELLE dans Cloud Firestore (respecte l'ordre des dépendances des règles)
+      if (isFirebaseConfigured && firestoreDb) {
+        try {
+          // 4.1 Profil avec global_role = MANITOU (requis par getUserProfile() dans firestore.rules)
+          await setDoc(doc(firestoreDb, 'profiles', userId), {
+            ...newProfile,
+            global_role: 'MANITOU',
+            tribbu_ids: [],
+            chef_tribbu_ids: [],
+            updated_at: nowIso,
+          });
+
+          // 4.2 Association Grande Tribbu (requis par isManitouOfGrandeTribbu(gtId))
+          await setDoc(doc(firestoreDb, 'grande_tribbu', gtId), {
+            ...newAssociation,
+            updated_at: nowIso,
+          });
+
+          // 4.3 Rôle Manitou et Canaux socles
+          await setDoc(doc(firestoreDb, 'membres_roles', manitouRole.id), {
+            ...manitouRole,
+            updated_at: nowIso,
+          });
+          await setDoc(
+            doc(firestoreDb, 'canaux', annoncesCanal.id),
+            annoncesCanal
+          );
+          await setDoc(doc(firestoreDb, 'canaux', agoraCanal.id), agoraCanal);
+
+          // 4.4 Message de bienvenue
+          const { emargements: _unused, ...firestoreWelcomeMsg } = welcomeMsg;
+          void _unused;
+          await setDoc(
+            doc(firestoreDb, 'messages', welcomeMsgId),
+            firestoreWelcomeMsg
+          );
+        } catch (firestoreErr) {
+          console.warn(
+            '[Tribbu Firebase] Les règles Cloud Firestore de la console ont restreint une écriture. Pensez à publier le fichier firebase/firestore.rules dans Firebase Console > Firestore Database > Règles. Repli local activé pour cette session :',
+            firestoreErr
+          );
+        }
+      }
+
       return { profile: newProfile, association: newAssociation };
+    } finally {
+      this.isProvisioning = false;
     }
-
-    // Mode local : création complète et isolée de la nouvelle association et de son Grand Manitou
-    const userId = `user-${crypto.randomUUID().slice(0, 8)}`;
-    const newProfile: Profile = {
-      id: userId,
-      email: params.email.trim(),
-      display_name: params.displayName.trim(),
-      avatar_url: null,
-      phone_number: params.userPhone?.trim() || null,
-      sms_notifications_enabled: Boolean(params.userPhone?.trim()),
-      grande_tribbu_ids: [gtId],
-      last_seen_at: nowIso,
-      created_at: nowIso,
-    };
-
-    const newAssociation: GrandeTribbu = {
-      id: gtId,
-      slug: finalSlug,
-      name: cleanName,
-      description: params.description?.trim() || null,
-      address: params.address?.trim() || null,
-      contact_phone: params.contactPhone?.trim() || null,
-      contact_email: params.contactEmail?.trim() || null,
-      logo_url: '/Tribbu_logo.png',
-      manitou_id: userId,
-      settings: {
-        allow_pygmee_feux_de_camp: true,
-        require_emargement_on_annonces: true,
-        sms_gateway_enabled: true,
-      },
-      created_at: nowIso,
-    };
-
-    const annoncesCanal: Canal = {
-      id: `canal-${gtId}-annonces`,
-      type: 'GRANDE_TRIBBU_ANNONCES',
-      name: 'Annonces Officielles',
-      description: `Canal officiel d'information descendante de ${cleanName}. Émargement requis.`,
-      grande_tribbu_id: gtId,
-      tribbu_id: null,
-      tippi_id: null,
-      feu_de_camp_id: null,
-      last_message_at: nowIso,
-      created_at: nowIso,
-    };
-
-    const agoraCanal: Canal = {
-      id: `canal-${gtId}-agora`,
-      type: 'AGORA_GENERALE',
-      name: 'Agora Générale',
-      description: `Agora générale ouverte à tous les membres de ${cleanName}.`,
-      grande_tribbu_id: gtId,
-      tribbu_id: null,
-      tippi_id: null,
-      feu_de_camp_id: null,
-      last_message_at: nowIso,
-      created_at: nowIso,
-    };
-
-    const manitouRole: MembreRole = {
-      id: `mr-${gtId}-manitou`,
-      user_id: userId,
-      invited_email: newProfile.email,
-      role: 'MANITOU',
-      grande_tribbu_id: gtId,
-      tribbu_id: null,
-      status: 'ACTIVE',
-      invitation_token: null,
-      invited_by: userId,
-      created_at: nowIso,
-    };
-
-    const welcomeMsg: ChatMessage = {
-      id: `msg-${gtId}-welcome`,
-      grande_tribbu_id: gtId,
-      canal_id: annoncesCanal.id,
-      author_id: userId,
-      content: `🎉 Bienvenue dans l'espace collaboratif officiel de **${cleanName}** !\n\nEn tant que **Grand Manitou**, vous pouvez dès maintenant :\n1. Créer vos premières **Tribbus** (commissions / groupes) via le bouton **+** dans la barre latérale gauche.\n2. Inviter les membres de votre association par e-mail via le bouton **Inviter** en haut à droite.\n\n🔗 URL dédiée de votre association : ${window.location.origin}/${finalSlug}`,
-      reply_to_message_id: null,
-      quoted_excerpt: null,
-      mentioned_user_ids: [userId],
-      mentioned_names: [newProfile.display_name],
-      attachments: [],
-      emargements: [],
-      created_at: nowIso,
-      updated_at: nowIso,
-    };
-
-    const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
-    writeLocal(PROFILES_STORAGE_KEY, [...customProfiles, newProfile]);
-
-    const associations = readLocal<GrandeTribbu[]>(ASSOCIATIONS_STORAGE_KEY, [
-      DEMO_GRANDE_TRIBBU,
-    ]);
-    writeLocal(ASSOCIATIONS_STORAGE_KEY, [...associations, newAssociation]);
-
-    const canaux = readLocal<Canal[]>(CANAUX_STORAGE_KEY, DEMO_CANAUX);
-    writeLocal(CANAUX_STORAGE_KEY, [...canaux, annoncesCanal, agoraCanal]);
-
-    const roles = readLocal<MembreRole[]>(
-      ROLES_STORAGE_KEY,
-      DEMO_MEMBRES_ROLES
-    );
-    writeLocal(ROLES_STORAGE_KEY, [...roles, manitouRole]);
-
-    const messages = readLocal<ChatMessage[]>(
-      MESSAGES_STORAGE_KEY,
-      DEMO_MESSAGES
-    );
-    writeLocal(MESSAGES_STORAGE_KEY, [...messages, welcomeMsg]);
-
-    localStorage.setItem(DEMO_USER_STORAGE_KEY, newProfile.id);
-
-    return { profile: newProfile, association: newAssociation };
   },
 
   /**
@@ -442,8 +457,9 @@ export const authService = {
       if (!cred.user) {
         throw new Error('Identifiants invalides.');
       }
+      localStorage.setItem(DEMO_USER_STORAGE_KEY, cred.user.uid);
       const profile = await this.getCurrentProfile();
-      if (!profile) throw new Error('Profil introuvable dans Firestore.');
+      if (!profile) throw new Error('Profil introuvable.');
       return profile;
     }
 
@@ -486,127 +502,149 @@ export const authService = {
     } = params;
 
     const nowIso = new Date().toISOString();
+    this.isProvisioning = true;
 
-    if (isFirebaseConfigured && firebaseAuth && firestoreDb) {
-      const cred = await createUserWithEmailAndPassword(
-        firebaseAuth,
-        email,
-        password
-      );
-      await updateProfile(cred.user, { displayName });
+    try {
+      let userId = `user-${crypto.randomUUID().slice(0, 8)}`;
 
-      const rolesRef = collection(firestoreDb, 'membres_roles');
-      const qToken = query(
-        rolesRef,
-        where('invitation_token', '==', invitationToken)
-      );
-      const tokenSnap = await getDocs(qToken);
-
-      const targetGtIds = new Set<string>(
-        grandeTribbuId ? [grandeTribbuId] : []
-      );
-      const targetTribbuIds: string[] = tribbuId ? [tribbuId] : [];
-      const chefTribbuIds: string[] = [];
-
-      if (!tokenSnap.empty) {
-        for (const docSnap of tokenSnap.docs) {
-          const data = docSnap.data() as MembreRole;
-          await updateDoc(doc(firestoreDb, 'membres_roles', docSnap.id), {
-            user_id: cred.user.uid,
-            status: 'ACTIVE',
-            updated_at: nowIso,
-          });
-          if (data.grande_tribbu_id) {
-            targetGtIds.add(data.grande_tribbu_id);
-          }
-          if (data.tribbu_id && !targetTribbuIds.includes(data.tribbu_id)) {
-            targetTribbuIds.push(data.tribbu_id);
-          }
-          if (data.role === 'CHEF' && data.tribbu_id) {
-            chefTribbuIds.push(data.tribbu_id);
+      if (isFirebaseConfigured && firebaseAuth) {
+        try {
+          const cred = await createUserWithEmailAndPassword(
+            firebaseAuth,
+            email,
+            password
+          );
+          userId = cred.user.uid;
+          await updateProfile(cred.user, { displayName });
+        } catch (authErr) {
+          if (isAuthEmailInUseError(authErr)) {
+            const cred = await signInWithEmailAndPassword(
+              firebaseAuth,
+              email,
+              password
+            );
+            userId = cred.user.uid;
+          } else {
+            throw authErr;
           }
         }
       }
 
+      const customRoles = readLocal<MembreRole[]>(
+        ROLES_STORAGE_KEY,
+        DEMO_MEMBRES_ROLES
+      );
+      const existingInviteIdx = customRoles.findIndex(
+        (r) =>
+          r.invitation_token === invitationToken ||
+          r.invited_email?.toLowerCase() === email.toLowerCase()
+      );
+
+      const resolvedGtId =
+        existingInviteIdx >= 0
+          ? customRoles[existingInviteIdx].grande_tribbu_id
+          : grandeTribbuId || 'gt-main';
+
       const newProfile: Profile = {
-        id: cred.user.uid,
+        id: userId,
         email,
         display_name: displayName,
         avatar_url: null,
         phone_number: phoneNumber || null,
         sms_notifications_enabled: Boolean(phoneNumber),
-        grande_tribbu_ids: Array.from(targetGtIds),
+        grande_tribbu_ids: [resolvedGtId],
         last_seen_at: nowIso,
         created_at: nowIso,
       };
 
-      await setDoc(doc(firestoreDb, 'profiles', cred.user.uid), {
-        ...newProfile,
-        global_role: chefTribbuIds.length > 0 ? 'CHEF' : 'PYGMEE',
-        tribbu_ids: targetTribbuIds,
-        chef_tribbu_ids: chefTribbuIds,
-        updated_at: nowIso,
-      });
+      const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
+      writeLocal(PROFILES_STORAGE_KEY, [
+        ...customProfiles.filter((p) => p.id !== userId),
+        newProfile,
+      ]);
+
+      if (existingInviteIdx >= 0) {
+        customRoles[existingInviteIdx] = {
+          ...customRoles[existingInviteIdx],
+          user_id: newProfile.id,
+          status: 'ACTIVE',
+        };
+      } else {
+        customRoles.push({
+          id: `mr-${crypto.randomUUID().slice(0, 8)}`,
+          user_id: newProfile.id,
+          invited_email: email,
+          role: 'PYGMEE',
+          grande_tribbu_id: resolvedGtId,
+          tribbu_id: tribbuId || null,
+          status: 'ACTIVE',
+          invitation_token: invitationToken,
+          invited_by: null,
+          created_at: nowIso,
+        });
+      }
+
+      writeLocal(ROLES_STORAGE_KEY, customRoles);
+      localStorage.setItem(DEMO_USER_STORAGE_KEY, newProfile.id);
+
+      if (isFirebaseConfigured && firestoreDb) {
+        try {
+          const rolesRef = collection(firestoreDb, 'membres_roles');
+          const qToken = query(
+            rolesRef,
+            where('invitation_token', '==', invitationToken)
+          );
+          const tokenSnap = await getDocs(qToken);
+
+          const targetGtIds = new Set<string>(
+            resolvedGtId ? [resolvedGtId] : []
+          );
+          const targetTribbuIds: string[] = tribbuId ? [tribbuId] : [];
+          const chefTribbuIds: string[] = [];
+
+          if (!tokenSnap.empty) {
+            for (const docSnap of tokenSnap.docs) {
+              const data = docSnap.data() as MembreRole;
+              await updateDoc(doc(firestoreDb, 'membres_roles', docSnap.id), {
+                user_id: userId,
+                status: 'ACTIVE',
+                updated_at: nowIso,
+              });
+              if (data.grande_tribbu_id) {
+                targetGtIds.add(data.grande_tribbu_id);
+              }
+              if (
+                data.tribbu_id &&
+                !targetTribbuIds.includes(data.tribbu_id)
+              ) {
+                targetTribbuIds.push(data.tribbu_id);
+              }
+              if (data.role === 'CHEF' && data.tribbu_id) {
+                chefTribbuIds.push(data.tribbu_id);
+              }
+            }
+          }
+
+          await setDoc(doc(firestoreDb, 'profiles', userId), {
+            ...newProfile,
+            grande_tribbu_ids: Array.from(targetGtIds),
+            global_role: chefTribbuIds.length > 0 ? 'CHEF' : 'PYGMEE',
+            tribbu_ids: targetTribbuIds,
+            chef_tribbu_ids: chefTribbuIds,
+            updated_at: nowIso,
+          });
+        } catch (firestoreErr) {
+          console.warn(
+            '[Tribbu Firebase] Repli local lors de la validation d’invitation :',
+            firestoreErr
+          );
+        }
+      }
 
       return newProfile;
+    } finally {
+      this.isProvisioning = false;
     }
-
-    // Mode local
-    const customRoles = readLocal<MembreRole[]>(
-      ROLES_STORAGE_KEY,
-      DEMO_MEMBRES_ROLES
-    );
-    const existingInviteIdx = customRoles.findIndex(
-      (r) =>
-        r.invitation_token === invitationToken ||
-        r.invited_email?.toLowerCase() === email.toLowerCase()
-    );
-
-    const resolvedGtId =
-      existingInviteIdx >= 0
-        ? customRoles[existingInviteIdx].grande_tribbu_id
-        : grandeTribbuId || 'gt-main';
-
-    const newProfile: Profile = {
-      id: `user-${crypto.randomUUID().slice(0, 8)}`,
-      email,
-      display_name: displayName,
-      avatar_url: null,
-      phone_number: phoneNumber || null,
-      sms_notifications_enabled: Boolean(phoneNumber),
-      grande_tribbu_ids: [resolvedGtId],
-      last_seen_at: nowIso,
-      created_at: nowIso,
-    };
-
-    const customProfiles = readLocal<Profile[]>(PROFILES_STORAGE_KEY, []);
-    writeLocal(PROFILES_STORAGE_KEY, [...customProfiles, newProfile]);
-
-    if (existingInviteIdx >= 0) {
-      customRoles[existingInviteIdx] = {
-        ...customRoles[existingInviteIdx],
-        user_id: newProfile.id,
-        status: 'ACTIVE',
-      };
-    } else {
-      customRoles.push({
-        id: `mr-${crypto.randomUUID().slice(0, 8)}`,
-        user_id: newProfile.id,
-        invited_email: email,
-        role: 'PYGMEE',
-        grande_tribbu_id: resolvedGtId,
-        tribbu_id: tribbuId || null,
-        status: 'ACTIVE',
-        invitation_token: invitationToken,
-        invited_by: null,
-        created_at: nowIso,
-      });
-    }
-
-    writeLocal(ROLES_STORAGE_KEY, customRoles);
-    localStorage.setItem(DEMO_USER_STORAGE_KEY, newProfile.id);
-
-    return newProfile;
   },
 
   /**
@@ -632,15 +670,19 @@ export const authService = {
     >
   ): Promise<void> {
     if (isFirebaseConfigured && firestoreDb) {
-      const profRef = doc(firestoreDb, 'profiles', userId);
-      await setDoc(
-        profRef,
-        {
-          ...updates,
-          updated_at: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      try {
+        const profRef = doc(firestoreDb, 'profiles', userId);
+        await setDoc(
+          profRef,
+          {
+            ...updates,
+            updated_at: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch {
+        // Ignore si règles non publiées
+      }
     }
   },
 
@@ -654,17 +696,23 @@ export const authService = {
     role: TribbuRole
   ): Promise<void> {
     if (isFirebaseConfigured && firestoreDb) {
-      const profRef = doc(firestoreDb, 'profiles', userId);
-      await setDoc(
-        profRef,
-        {
-          grande_tribbu_ids: arrayUnion(grandeTribbuId),
-          tribbu_ids: arrayUnion(tribbuId),
-          ...(role === 'CHEF' ? { chef_tribbu_ids: arrayUnion(tribbuId) } : {}),
-          updated_at: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      try {
+        const profRef = doc(firestoreDb, 'profiles', userId);
+        await setDoc(
+          profRef,
+          {
+            grande_tribbu_ids: arrayUnion(grandeTribbuId),
+            tribbu_ids: arrayUnion(tribbuId),
+            ...(role === 'CHEF'
+              ? { chef_tribbu_ids: arrayUnion(tribbuId) }
+              : {}),
+            updated_at: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch {
+        // Ignore si règles non publiées
+      }
     }
   },
 
@@ -672,10 +720,13 @@ export const authService = {
    * Déconnexion Firebase Auth.
    */
   async signOut(): Promise<void> {
-    if (isFirebaseConfigured && firebaseAuth) {
-      await firebaseSignOut(firebaseAuth);
-      return;
-    }
     localStorage.setItem(DEMO_USER_STORAGE_KEY, 'logged-out');
+    if (isFirebaseConfigured && firebaseAuth) {
+      try {
+        await firebaseSignOut(firebaseAuth);
+      } catch {
+        // Ignore
+      }
+    }
   },
 };
