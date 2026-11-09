@@ -9,6 +9,7 @@ export type ModalType =
   | 'create-feu-de-camp'
   | 'role-manager'
   | 'delete-association'
+  | 'delete-tribbu'
   | 'user-profile'
   | null;
 
@@ -47,6 +48,10 @@ interface UIState {
   setSearchQuery: (query: string) => void;
   setFilterMentionsOnly: (val: boolean) => void;
   toggleFilterMentionsOnly: () => void;
+  closeDeletedCanauxTabs: (
+    deletedCanalIds: string[],
+    fallbackCanalId?: string | null
+  ) => void;
   resetAfterAssociationDeletion: () => void;
 }
 
@@ -146,6 +151,29 @@ export const useUIStore = create<UIState>()(
       setFilterMentionsOnly: (val) => set({ filterMentionsOnly: val }),
       toggleFilterMentionsOnly: () =>
         set((state) => ({ filterMentionsOnly: !state.filterMentionsOnly })),
+      closeDeletedCanauxTabs: (deletedCanalIds, fallbackCanalId = null) => {
+        const deletedSet = new Set(deletedCanalIds);
+        const { openTabs, activeCanalId, replyTarget } = get();
+        const remainingTabs = openTabs.filter(
+          (t) => !deletedSet.has(t.canalId)
+        );
+        const nextActive =
+          activeCanalId && !deletedSet.has(activeCanalId)
+            ? activeCanalId
+            : remainingTabs[0]?.canalId || fallbackCanalId;
+        const nextReplyTarget =
+          replyTarget && deletedSet.has(replyTarget.canalId)
+            ? null
+            : replyTarget;
+
+        set({
+          openTabs: remainingTabs,
+          activeCanalId: nextActive,
+          replyTarget: nextReplyTarget,
+          activeModal: null,
+          modalContextTribbuId: null,
+        });
+      },
       resetAfterAssociationDeletion: () =>
         set({
           openTabs: [],

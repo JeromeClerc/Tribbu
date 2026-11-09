@@ -894,7 +894,7 @@ export const chatService = {
   },
 
   /**
-   * Ajoute un membre existant à une Tribbu de l'association.
+   * Ajoute ou ré-assigne un membre existant (y compris un membre "Sans Tribbu") à une Tribbu de l'association.
    */
   async assignMemberToTribbu(params: {
     grandeTribbuId: string;
@@ -910,11 +910,33 @@ export const chatService = {
       STORAGE_KEYS.ROLES,
       DEMO_MEMBRES_ROLES
     );
-    const exists = roles.some(
+
+    // Si ce membre était "Sans Tribbu" (tribbu_id === null et role !== 'MANITOU'), on retire l'enregistrement d'attente
+    const unassignedRoleIds = roles
+      .filter(
+        (r) =>
+          r.user_id === params.userId &&
+          r.grande_tribbu_id === params.grandeTribbuId &&
+          !r.tribbu_id &&
+          r.role !== 'MANITOU'
+      )
+      .map((r) => r.id);
+
+    const cleanedRoles = roles.filter(
+      (r) => !unassignedRoleIds.includes(r.id)
+    );
+
+    const existingIdx = cleanedRoles.findIndex(
       (r) => r.user_id === params.userId && r.tribbu_id === params.tribbuId
     );
-    if (!exists) {
-      roles.push({
+    if (existingIdx >= 0) {
+      cleanedRoles[existingIdx] = {
+        ...cleanedRoles[existingIdx],
+        role: params.role,
+        status: 'ACTIVE',
+      };
+    } else {
+      cleanedRoles.push({
         id: roleId,
         user_id: params.userId,
         invited_email: null,
@@ -926,11 +948,17 @@ export const chatService = {
         invited_by: params.assignedBy,
         created_at: nowIso,
       });
-      writeLocal(STORAGE_KEYS.ROLES, roles);
     }
+    writeLocal(STORAGE_KEYS.ROLES, cleanedRoles);
 
     if (isFirebaseConfigured && firestoreDb) {
       try {
+        for (const oldId of unassignedRoleIds) {
+          await deleteDoc(doc(firestoreDb, 'membres_roles', oldId)).catch(
+            () => undefined
+          );
+        }
+
         await setDoc(
           doc(firestoreDb, 'membres_roles', roleId),
           {
@@ -960,6 +988,258 @@ export const chatService = {
     }
 
     notifyRealtimeListeners('hierarchy:updated');
+  },
+
+  /**
+   * SUPPRESSION SÉCURISÉE D'UNE TRIBBU (Réservée au Grand Manitou) :
+   * - Supprime tous les messages de la Tribbu et de ses Tippis / Feux de camp rattachés.
+   * - Supprime tous les fichiers uploadés (.png, .jpg, .pdf) liés à ces messages dans Firebase Storage.
+   * - Supprime tous les Tippis rattachés et leurs canaux, ainsi que les canaux de la Tribbu.
+   * - NE SUPPRIME PAS les utilisateurs : les membres qui n'appartenaient qu'à cette Tribbu
+   *   se retrouvent "Sans Tribbu" (`tribbu_id: null, role: 'PYGMEE', status: 'ACTIVE'`),
+   *   conservant la lecture des Annonces Officielles et l'écriture dans l'Agora Générale
+   *   en attendant d'être assignés à une autre Tribbu par le Grand Manitou ou un Chef de Tribbu.
+   */
+  async deleteTribbu(params: {
+    grandeTribbuId: string;
+    grandeTribbuSlug: string;
+    tribbuId: string;
+  }): Promise<{
+    deletedCanalIds: string[];
+    deletedMessagesCount: number;
+    deletedFilesCount: number;
+    deletedTippisCount: number;
+    unassignedMembersCount: number;
+  }> {
+    const { grandeTribbuId: gtId, grandeTribbuSlug, tribbuId } = params;
+    const nowIso = new Date().toISOString();
+
+    // 1. Identification de tous les Tippis, Feux de camp, Canaux et Messages liés à cette Tribbu
+    const hierarchy = await this.fetchHierarchy(grandeTribbuSlug);
+    const allMessages = await this.fetchMessages(grandeTribbuSlug);
+
+    const targetTippis = hierarchy.tippis.filter(
+      (tp) => tp.tribbu_id === tribbuId
+    );
+    const targetTippiIdSet = new Set(targetTippis.map((tp) => tp.id));
+
+    const targetFeux = hierarchy.feuxDeCamp.filter(
+      (f) => f.tribbu_id === tribbuId
+    );
+    const targetFeuIdSet = new Set(targetFeux.map((f) => f.id));
+
+    const targetCanaux = hierarchy.canaux.filter(
+      (c) =>
+        c.tribbu_id === tribbuId ||
+        (c.tippi_id && targetTippiIdSet.has(c.tippi_id)) ||
+        (c.feu_de_camp_id && targetFeuIdSet.has(c.feu_de_camp_id))
+    );
+    const targetCanalIds = targetCanaux.map((c) => c.id);
+    const targetCanalIdSet = new Set(targetCanalIds);
+
+    const targetMessages = allMessages.filter((m) =>
+      targetCanalIdSet.has(m.canal_id)
+    );
+    const targetMessageIdSet = new Set(targetMessages.map((m) => m.id));
+
+    const targetAttachments: MessageAttachment[] = [];
+    for (const msg of targetMessages) {
+      if (Array.isArray(msg.attachments)) {
+        targetAttachments.push(...msg.attachments);
+      }
+    }
+
+    // 2. Suppression de tous les fichiers uploadés (.png, .jpg, .pdf) dans Firebase Cloud Storage
+    const deletedFilesCount = await deleteAssociationStorageFiles(
+      targetAttachments,
+      targetCanalIds
+    );
+
+    // 3. Mise à jour des affiliations membres : aucun utilisateur n'est supprimé !
+    // Les membres qui n'avaient que cette Tribbu deviennent "Sans Tribbu" (`tribbu_id: null, role: 'PYGMEE'`).
+    const localRoles = readLocal<MembreRole[]>(
+      STORAGE_KEYS.ROLES,
+      DEMO_MEMBRES_ROLES
+    );
+    const affectedRoles = hierarchy.membresRoles.filter(
+      (r) => r.tribbu_id === tribbuId
+    );
+
+    const updatedRoles: MembreRole[] = [];
+    const roleIdsToDeleteInFirestore: string[] = [];
+    const rolesToUpdateInFirestore: MembreRole[] = [];
+    const affectedUserIds = new Set<string>();
+
+    // Fusionne localRoles et hierarchy.membresRoles pour ne perdre aucune affiliation
+    const mergedRoles = mergeById(localRoles, hierarchy.membresRoles);
+
+    for (const role of mergedRoles) {
+      if (role.tribbu_id !== tribbuId) {
+        updatedRoles.push(role);
+        continue;
+      }
+
+      if (role.user_id) {
+        affectedUserIds.add(role.user_id);
+      }
+
+      // Vérifie si ce membre possède déjà un autre rôle dans l'association (une autre Tribbu ou le rôle Manitou)
+      const hasOtherAffiliationInAssociation = mergedRoles.some(
+        (other) =>
+          other.id !== role.id &&
+          other.grande_tribbu_id === gtId &&
+          other.tribbu_id !== tribbuId &&
+          ((role.user_id && other.user_id === role.user_id) ||
+            (!role.user_id &&
+              role.invited_email &&
+              other.invited_email === role.invited_email))
+      );
+
+      if (hasOtherAffiliationInAssociation) {
+        // Le membre appartient déjà à une autre Tribbu : on supprime simplement le lien vers la Tribbu supprimée
+        roleIdsToDeleteInFirestore.push(role.id);
+      } else {
+        // Le membre se retrouve "Sans Tribbu" (tribbu_id: null, role: PYGMEE) en attente d'assignation
+        const unassignedRole: MembreRole = {
+          ...role,
+          tribbu_id: null,
+          role: role.role === 'MANITOU' ? 'MANITOU' : 'PYGMEE',
+        };
+        updatedRoles.push(unassignedRole);
+        rolesToUpdateInFirestore.push(unassignedRole);
+      }
+    }
+
+    writeLocal(STORAGE_KEYS.ROLES, updatedRoles);
+
+    // 4. Purge des messages, canaux, Tippis, Feux de camp et de la Tribbu dans le stockage local
+    const storedMessages = readLocal<ChatMessage[]>(
+      STORAGE_KEYS.MESSAGES,
+      DEMO_MESSAGES
+    );
+    writeLocal(
+      STORAGE_KEYS.MESSAGES,
+      storedMessages.filter((m) => !targetCanalIdSet.has(m.canal_id))
+    );
+
+    const storedCanaux = readLocal<Canal[]>(STORAGE_KEYS.CANAUX, DEMO_CANAUX);
+    writeLocal(
+      STORAGE_KEYS.CANAUX,
+      storedCanaux.filter((c) => !targetCanalIdSet.has(c.id))
+    );
+
+    const storedTippis = readLocal<Tippi[]>(STORAGE_KEYS.TIPPIS, DEMO_TIPPIS);
+    writeLocal(
+      STORAGE_KEYS.TIPPIS,
+      storedTippis.filter(
+        (tp) => tp.tribbu_id !== tribbuId && !targetTippiIdSet.has(tp.id)
+      )
+    );
+
+    const storedFeux = readLocal<FeuDeCamp[]>(
+      STORAGE_KEYS.FEUX,
+      DEMO_FEUX_DE_CAMP
+    );
+    writeLocal(
+      STORAGE_KEYS.FEUX,
+      storedFeux.filter(
+        (f) => f.tribbu_id !== tribbuId && !targetFeuIdSet.has(f.id)
+      )
+    );
+
+    const storedTribbus = readLocal<Tribbu[]>(
+      STORAGE_KEYS.TRIBBUS,
+      DEMO_TRIBBUS
+    );
+    writeLocal(
+      STORAGE_KEYS.TRIBBUS,
+      storedTribbus.filter((t) => t.id !== tribbuId)
+    );
+
+    // 5. Purge dans Cloud Firestore et mise à jour des membres "Sans Tribbu"
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        // 5.1 Messages et émargements des canaux de la Tribbu et de ses Tippis
+        for (const msg of targetMessages) {
+          await deleteDoc(doc(firestoreDb, 'messages', msg.id)).catch(
+            () => undefined
+          );
+        }
+
+        const emSnap = await getDocs(
+          query(
+            collection(firestoreDb, 'emargements'),
+            where('grande_tribbu_id', '==', gtId)
+          )
+        ).catch(() => null);
+        if (emSnap) {
+          for (const d of emSnap.docs) {
+            const data = d.data() as Emargement;
+            if (targetMessageIdSet.has(data.message_id)) {
+              await deleteDoc(doc(firestoreDb, 'emargements', d.id)).catch(
+                () => undefined
+              );
+            }
+          }
+        }
+
+        // 5.2 Canaux, Tippis, Feux de camp et Tribbu
+        for (const cId of targetCanalIds) {
+          await deleteDoc(doc(firestoreDb, 'canaux', cId)).catch(
+            () => undefined
+          );
+        }
+        for (const tp of targetTippis) {
+          await deleteDoc(doc(firestoreDb, 'tippis', tp.id)).catch(
+            () => undefined
+          );
+        }
+        for (const f of targetFeux) {
+          await deleteDoc(doc(firestoreDb, 'feux_de_camp', f.id)).catch(
+            () => undefined
+          );
+        }
+        await deleteDoc(doc(firestoreDb, 'tribbus', tribbuId)).catch(
+          () => undefined
+        );
+
+        // 5.3 Mise à jour des rôles membres ("Sans Tribbu") et nettoyage des claims sur les profils
+        for (const rId of roleIdsToDeleteInFirestore) {
+          await deleteDoc(doc(firestoreDb, 'membres_roles', rId)).catch(
+            () => undefined
+          );
+        }
+        for (const updatedRole of rolesToUpdateInFirestore) {
+          await setDoc(
+            doc(firestoreDb, 'membres_roles', updatedRole.id),
+            {
+              ...updatedRole,
+              tribbu_id: null,
+              updated_at: nowIso,
+            },
+            { merge: true }
+          ).catch(() => undefined);
+        }
+        for (const uid of affectedUserIds) {
+          await authService.removeUserTribbuClaimsInFirestore(uid, tribbuId);
+        }
+      } catch (err) {
+        console.warn(
+          '[Tribbu Firebase] Repli local lors de la suppression de Tribbu :',
+          err
+        );
+      }
+    }
+
+    notifyRealtimeListeners('hierarchy:updated');
+
+    return {
+      deletedCanalIds: targetCanalIds,
+      deletedMessagesCount: targetMessages.length,
+      deletedFilesCount,
+      deletedTippisCount: targetTippis.length,
+      unassignedMembersCount: affectedRoles.length,
+    };
   },
 
   /**

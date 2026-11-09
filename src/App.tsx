@@ -25,6 +25,7 @@ import { InviteModal } from '@/components/modals/InviteModal';
 import { CreateTippiModal } from '@/components/modals/CreateTippiModal';
 import { RoleManager } from '@/components/modals/RoleManager';
 import { DeleteAssociationModal } from '@/components/modals/DeleteAssociationModal';
+import { DeleteTribbuModal } from '@/components/modals/DeleteTribbuModal';
 import { UserProfileModal } from '@/components/modals/UserProfileModal';
 import { AuthScreen } from '@/components/modals/AuthScreen';
 
@@ -112,6 +113,7 @@ export const App: React.FC = () => {
     createInvitation,
     updateMemberRole,
     assignMember,
+    deleteTribbu,
   } = useChatActions(
     activeSlug,
     grandeTribbu?.id || null,
@@ -357,6 +359,16 @@ export const App: React.FC = () => {
         feuxDeCamp={feuxDeCamp}
         profiles={profiles}
         membresRoles={membresRoles}
+      />
+
+      <DeleteTribbuModal
+        tribbus={tribbus}
+        tippis={tippis}
+        feuxDeCamp={feuxDeCamp}
+        canaux={canaux}
+        messages={allMessages}
+        membresRoles={membresRoles}
+        onDeleteTribbu={deleteTribbu}
       />
 
       <UserProfileModal />

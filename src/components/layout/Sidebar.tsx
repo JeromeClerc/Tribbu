@@ -348,16 +348,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </span>
                     </button>
 
-                    {canManageThisTribbu && (
-                      <button
-                        type="button"
-                        onClick={() => openModal('create-tippi', tribbu.id)}
-                        className="p-1 rounded-md text-slate-400 hover:text-tribbu-purple hover:bg-tribbu-purple/10 transition-colors"
-                        title={`Créer un Tippi dans ${tribbu.name}`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {canManageThisTribbu && (
+                        <button
+                          type="button"
+                          onClick={() => openModal('create-tippi', tribbu.id)}
+                          className="p-1 rounded-md text-slate-400 hover:text-tribbu-purple hover:bg-tribbu-purple/10 transition-colors"
+                          title={`Créer un Tippi dans ${tribbu.name}`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {globalRole === 'MANITOU' && (
+                        <button
+                          type="button"
+                          onClick={() => openModal('delete-tribbu', tribbu.id)}
+                          className="p-1 rounded-md text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                          title={`Supprimer la Tribbu « ${tribbu.name} » (Grand Manitou)`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {isExpanded && (
@@ -396,6 +408,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               );
             })}
+
+            {visibleTribbus.length === 0 &&
+              (!sidebarCollapsed || isMobileDrawer) && (
+                <div className="mx-1 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {globalRole === 'MANITOU' ? (
+                    <span>
+                      Aucune Tribbu créée pour le moment. Cliquez sur{' '}
+                      <strong>+</strong> pour créer votre première Tribbu.
+                    </span>
+                  ) : (
+                    <span>
+                      Vous êtes actuellement <strong>sans Tribbu</strong> en
+                      attente d'assignation par le Grand Manitou ou un(e)
+                      Chef(fe) de Tribbu. Vous pouvez lire les{' '}
+                      <strong>Annonces Officielles</strong> et échanger dans l'
+                      <strong>Agora Générale</strong>.
+                    </span>
+                  )}
+                </div>
+              )}
           </div>
         </div>
 

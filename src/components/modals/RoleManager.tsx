@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Shield, UserCheck, UserPlus, UserX } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Shield, Trash2, UserCheck, UserPlus, UserX } from 'lucide-react';
 import { Modal } from '@/components/common/Modal';
 import { Avatar } from '@/components/common/Avatar';
 import { RoleBadge } from '@/components/common/Badge';
@@ -36,7 +36,7 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
   onUpdateRole,
   onAssignMember,
 }) => {
-  const { activeModal, closeModal } = useUIStore();
+  const { activeModal, closeModal, openModal } = useUIStore();
   const { user, globalRole } = useAuth();
 
   const [selectedUserId, setSelectedUserId] = useState(profiles[0]?.id || '');
@@ -48,6 +48,18 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
   const isOpen = activeModal === 'role-manager';
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
   const tribbuMap = new Map(tribbus.map((t) => [t.id, t]));
+
+  useEffect(() => {
+    if (!selectedUserId && profiles[0]?.id) {
+      setSelectedUserId(profiles[0].id);
+    }
+    if (
+      (!selectedTribbuId || !tribbus.some((t) => t.id === selectedTribbuId)) &&
+      tribbus[0]?.id
+    ) {
+      setSelectedTribbuId(tribbus[0].id);
+    }
+  }, [profiles, tribbus, selectedUserId, selectedTribbuId]);
 
   const handleAssign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,6 +170,11 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
                           {prof?.display_name || mr.invited_email}
                         </span>
                         <RoleBadge role={mr.role} size="xs" />
+                        {mr.tribbu_id === null && mr.role !== 'MANITOU' && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                            Sans Tribbu (en attente d'assignation)
+                          </span>
+                        )}
                         {mr.status === 'INVITED' && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-500">
                             Invitation en attente
@@ -172,7 +189,11 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
                         Périmètre :{' '}
                         <strong className="text-slate-700 dark:text-slate-200">
-                          {tribbu ? tribbu.name : 'Grande Tribbu (Global)'}
+                          {tribbu
+                            ? tribbu.name
+                            : mr.role === 'MANITOU'
+                              ? 'Grande Tribbu (Global)'
+                              : 'Sans Tribbu — Accès Annonces Officielles & Agora Générale'}
                         </strong>
                       </p>
                     </div>
@@ -180,6 +201,23 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
 
                   {mr.role !== 'MANITOU' && (
                     <div className="flex items-center gap-2">
+                      {mr.tribbu_id === null &&
+                        mr.user_id &&
+                        tribbus.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedUserId(mr.user_id!);
+                              if (!selectedTribbuId && tribbus[0]?.id) {
+                                setSelectedTribbuId(tribbus[0].id);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-tribbu-teal/15 text-tribbu-teal hover:bg-tribbu-teal/25 transition-colors"
+                            title="Sélectionner ce membre pour l'assigner à une Tribbu"
+                          >
+                            Assigner à une Tribbu
+                          </button>
+                        )}
                       <select
                         value={mr.role}
                         onChange={(e) =>
@@ -236,6 +274,44 @@ export const RoleManager: React.FC<RoleManagerProps> = ({
             })}
           </div>
         </div>
+
+        {/* Section Grand Manitou : Administration & Suppression sécurisée d'une Tribbu */}
+        {globalRole === 'MANITOU' && tribbus.length > 0 && (
+          <div className="pt-4 border-t border-slate-200 dark:border-tribbu-charcoal-border">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-rose-500">
+                Administration des Tribbus (Grand Manitou)
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {tribbus.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-tribbu-charcoal-border bg-slate-50/70 dark:bg-tribbu-charcoal-deep/60"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: t.color }}
+                    />
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                      {t.name}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openModal('delete-tribbu', t.id)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-rose-500 hover:bg-rose-500/10 border border-rose-500/20 transition-colors shrink-0"
+                    title={`Supprimer la Tribbu « ${t.name} »`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Supprimer...</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );

@@ -193,6 +193,16 @@ export function useChatActions(
     onSuccess: invalidateAll,
   });
 
+  const deleteTribbuMutation = useMutation({
+    mutationFn: (tribbuId: string) =>
+      chatService.deleteTribbu({
+        grandeTribbuId: activeGrandeTribbuId || 'gt-main',
+        grandeTribbuSlug: activeSlug || 'les-sentiers-vivants',
+        tribbuId,
+      }),
+    onSuccess: invalidateAll,
+  });
+
   void activeCanalId;
 
   return {
@@ -206,5 +216,7 @@ export function useChatActions(
     createInvitation: createInvitationMutation.mutateAsync,
     updateMemberRole: updateMemberRoleMutation.mutateAsync,
     assignMember: assignMemberMutation.mutateAsync,
+    deleteTribbu: deleteTribbuMutation.mutateAsync,
+    isDeletingTribbu: deleteTribbuMutation.isPending,
   };
 }

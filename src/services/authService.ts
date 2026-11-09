@@ -15,6 +15,7 @@ import {
   updateDoc,
   where,
   arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore';
 import {
   firebaseAuth,
@@ -752,6 +753,32 @@ export const authService = {
             ...(role === 'CHEF'
               ? { chef_tribbu_ids: arrayUnion(tribbuId) }
               : {}),
+            updated_at: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch {
+        // Ignore si règles non publiées
+      }
+    }
+  },
+
+  /**
+   * Retire une Tribbu supprimée des listes `tribbu_ids` et `chef_tribbu_ids` d'un membre dans Firestore
+   * tout en conservant son appartenance à `grande_tribbu_ids` (membre sans Tribbu).
+   */
+  async removeUserTribbuClaimsInFirestore(
+    userId: string,
+    tribbuId: string
+  ): Promise<void> {
+    if (isFirebaseConfigured && firestoreDb) {
+      try {
+        const profRef = doc(firestoreDb, 'profiles', userId);
+        await setDoc(
+          profRef,
+          {
+            tribbu_ids: arrayRemove(tribbuId),
+            chef_tribbu_ids: arrayRemove(tribbuId),
             updated_at: new Date().toISOString(),
           },
           { merge: true }
