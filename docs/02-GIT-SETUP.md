@@ -9,7 +9,7 @@ Ce guide vous accompagne pas à pas pour initialiser le dépôt Git local dans `
 Avant d'initialiser Git, assurez-vous que les fichiers sensibles et les dépendances volumineuses sont exclus (déjà configuré dans `.gitignore` à la racine) :
 - `node_modules/`
 - `dist/`
-- `.env` et `.env.local` (ne commitez **jamais** vos clés secrètes Supabase)
+- `.env` et `.env.local` (ne commitez **jamais** vos clés d'environnement)
 - `.vercel/`
 
 ---
@@ -33,14 +33,14 @@ git status
 
 ## Étape 3 : Créer le premier commit structuré
 
-Ajoutez l'ensemble des fichiers de l'architecture initiale (code source React/TypeScript, migration SQL Supabase, icônes PWA et documentation) :
+Ajoutez l'ensemble des fichiers de l'architecture initiale (code source React/TypeScript, règles de sécurité Google Firebase, icônes PWA et documentation) :
 
 ```powershell
 # 1. Indexer tous les fichiers du projet
 git add .
 
 # 2. Créer le commit initial
-git commit -m "feat: initialisation complète de l'application PWA Tribbu (React, TS, Tailwind, Supabase RLS)"
+git commit -m "feat: initialisation complète de l'application PWA Tribbu (React, TS, Tailwind, Firebase)"
 ```
 
 ---
@@ -72,14 +72,13 @@ Pour maintenir un historique Git propre et déclencher proprement les déploieme
 
 ```powershell
 # Créer une branche pour une évolution
-git checkout -b feat/personnalisation-association
+git checkout -b feat/mentions-membres
 
 # Vérifier la compilation TypeScript et le build avant de commiter
 npm run build
 
 # Commiter et pousser
 git add .
-git commit -m "feat(chat): amélioration des filtres de recherche"
-git push origin feat/personnalisation-association
+git commit -m "feat(chat): ajout des mentions <@nom_personne> et filtre rapide"
+git push origin feat/mentions-membres
 ```
-

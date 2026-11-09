@@ -1,4 +1,5 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { firebaseStorage, isFirebaseConfigured } from './firebaseClient';
 import type { MessageAttachment } from '@/types/tribbu.types';
 
 const ALLOWED_MIME_TYPES = [
@@ -33,8 +34,8 @@ export function validateAttachmentFile(file: File): UploadValidationResult {
 }
 
 /**
- * Téléverse un fichier (.png, .jpg, .pdf) dans le bucket Supabase `chat-attachments`
- * ou génère une URL locale en mode démo hors-ligne.
+ * Téléverse un fichier (.png, .jpg, .pdf) dans Firebase Cloud Storage (`chat-attachments/...`)
+ * ou génère une Data URL locale en mode démo hors-ligne.
  */
 export async function uploadChatAttachment(
   file: File,
@@ -50,36 +51,28 @@ export async function uploadChatAttachment(
   const ext = file.name.split('.').pop()?.toLowerCase() || (isPdf ? 'pdf' : 'png');
   const attachmentId = crypto.randomUUID();
   const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const storagePath = `${canalId}/${userId}/${attachmentId}_${safeFileName}`;
+  const storagePath = `chat-attachments/${canalId}/${userId}/${attachmentId}_${safeFileName}`;
 
-  if (isSupabaseConfigured) {
-    const { error } = await supabase.storage
-      .from('chat-attachments')
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: file.type,
-      });
+  if (isFirebaseConfigured && firebaseStorage) {
+    const fileRef = ref(firebaseStorage, storagePath);
+    await uploadBytes(fileRef, file, {
+      contentType: file.type,
+      cacheControl: 'public,max-age=3600',
+    });
 
-    if (error) {
-      throw new Error(`Échec de l'envoi du fichier : ${error.message}`);
-    }
-
-    const { data: urlData } = supabase.storage
-      .from('chat-attachments')
-      .getPublicUrl(storagePath);
+    const publicUrl = await getDownloadURL(fileRef);
 
     return {
       id: attachmentId,
       name: file.name || `document.${ext}`,
-      url: urlData.publicUrl,
+      url: publicUrl,
       type: isPdf ? 'pdf' : 'image',
       mimeType: file.type as MessageAttachment['mimeType'],
       size: file.size,
     };
   }
 
-  // Mode Démo / Prévisualisation locale : conversion en Data URL ou Object URL
+  // Mode Démo / Prévisualisation locale : conversion en Data URL
   const localUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -96,4 +89,3 @@ export async function uploadChatAttachment(
     size: file.size,
   };
 }
-

@@ -1,6 +1,6 @@
 # Guide Pas à Pas : Déploiement Automatique sur Vercel (Git Push)
 
-Ce guide explique comment connecter votre dépôt Git **Tribbu** à **Vercel** afin que chaque `git push` sur la branche `main` déploie automatiquement une nouvelle version de la PWA en production.
+Ce guide explique comment connecter votre dépôt Git **Tribbu** à **Vercel** afin que chaque `git push` sur la branche `main` déploie automatiquement une nouvelle version de la PWA en production connectée à **Google Firebase**.
 
 ---
 
@@ -25,14 +25,18 @@ Vercel détecte automatiquement le framework **Vite**. Vérifiez que les paramè
 
 ---
 
-## Étape 3 : Configurer les Variables d'Environnement
+## Étape 3 : Configurer les Variables d'Environnement Firebase
 
-Avant de cliquer sur *Deploy*, dépliez la section **Environment Variables** et ajoutez les trois variables suivantes pour les environnements *Production*, *Preview* et *Development* :
+Avant de cliquer sur *Deploy*, dépliez la section **Environment Variables** et ajoutez les variables suivantes pour les environnements *Production*, *Preview* et *Development* :
 
-| Nom de la variable | Valeur | Description |
+| Nom de la variable | Exemple de valeur | Description |
 | :--- | :--- | :--- |
-| `VITE_SUPABASE_URL` | `https://votre-projet.supabase.co` | URL de votre projet Supabase |
-| `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1Ni...` | Clé publique `anon` Supabase |
+| `VITE_FIREBASE_API_KEY` | `AIzaSy...` | Clé API Web Firebase |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `votre-projet.firebaseapp.com` | Domaine d'authentification Firebase |
+| `VITE_FIREBASE_PROJECT_ID` | `votre-projet` | Identifiant du projet Firebase |
+| `VITE_FIREBASE_STORAGE_BUCKET` | `votre-projet.firebasestorage.app` | Bucket Firebase Cloud Storage |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | `123456789012` | Identifiant d'expéditeur Firebase |
+| `VITE_FIREBASE_APP_ID` | `1:123456789012:web:abcdef...` | Identifiant de l'application Web |
 | `VITE_APP_URL` | `https://votre-domaine.vercel.app` | URL publique utilisée pour générer les liens d'invitation |
 
 ---
@@ -45,15 +49,12 @@ Avant de cliquer sur *Deploy*, dépliez la section **Environment Variables** et 
 
 ---
 
-## Étape 5 : Autoriser le domaine Vercel dans Supabase Auth
+## Étape 5 : Autoriser le domaine Vercel dans Google Firebase
 
-Pour que les liens d'invitation et l'authentification fonctionnent sur votre domaine Vercel :
-1. Ouvrez votre Dashboard Supabase > **Authentication > URL Configuration**.
-2. Remplacez **Site URL** par `https://tribbu.vercel.app`.
-3. Dans **Redirect URLs**, ajoutez :
-   - `https://tribbu.vercel.app/**`
-   - `https://*-votre-equipe.vercel.app/**` (pour les déploiements de prévisualisation de branches).
-4. Cliquez sur **Save**.
+Pour que l'authentification Firebase et les liens d'invitation fonctionnent sur votre domaine Vercel :
+1. Ouvrez la [Console Firebase](https://console.firebase.google.com/) > **Authentication > Paramètres > Domaines autorisés**.
+2. Cliquez sur **Ajouter un domaine** et saisissez `tribbu.vercel.app` (ainsi que votre domaine personnalisé si vous en utilisez un).
+3. Cliquez sur **Ajouter**.
 
 ---
 
@@ -62,4 +63,3 @@ Pour que les liens d'invitation et l'authentification fonctionnent sur votre dom
 Désormais, votre pipeline CI/CD est actif :
 - Tout `git push origin main` déclenche automatiquement un déploiement en **Production** sur Vercel.
 - Toute Pull Request ou branche secondaire génère une **Preview URL** dédiée pour tester vos modifications sur mobile et desktop avant mise en production.
-

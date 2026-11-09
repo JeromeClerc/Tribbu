@@ -117,6 +117,8 @@ export interface ChatMessage {
     content: string;
   } | null;
   quoted_excerpt: string | null;
+  mentioned_user_ids?: string[];
+  mentioned_names?: string[];
   attachments: MessageAttachment[];
   emargements: Emargement[];
   created_at: string;
@@ -145,10 +147,10 @@ export interface PresenceUser {
 export interface CanalMutationSummary {
   canal: Canal;
   unreadCount: number;
+  mentionCount: number;
   mutatedSinceLastSeen: boolean;
   lastMessagePreview?: string;
   lastMessageAuthor?: string;
   lastMessageAt: string;
   parentTribbuName?: string;
 }
-

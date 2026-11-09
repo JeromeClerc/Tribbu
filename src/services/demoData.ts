@@ -546,9 +546,11 @@ export const DEMO_MESSAGES: ChatMessage[] = [
     canal_id: 'canal-gt-agora',
     author_id: 'user-pygmee-thomas',
     content:
-      "Bonjour toute la Grande Tribbu ! 👋\nQui part depuis le centre-ville vendredi vers 18h15 pour l'Assemblée Générale ? J'ai 3 places disponibles dans ma voiture (j'ai créé un Feu de camp dédié pour s'organiser).",
+      "Bonjour toute la Grande Tribbu ! 👋\nQui part depuis le centre-ville vendredi vers 18h15 pour l'Assemblée Générale ? <@Inès Lefèvre> et <@Lucas Bernard>, j'ai 3 places disponibles dans ma voiture (j'ai créé un Feu de camp dédié pour s'organiser).",
     reply_to_message_id: null,
     quoted_excerpt: null,
+    mentioned_user_ids: ['user-pygmee-ines', 'user-chef-comm'],
+    mentioned_names: ['Inès Lefèvre', 'Lucas Bernard'],
     attachments: [],
     emargements: [],
     created_at: minAgo(45),
@@ -559,7 +561,7 @@ export const DEMO_MESSAGES: ChatMessage[] = [
     canal_id: 'canal-gt-agora',
     author_id: 'user-pygmee-ines',
     content:
-      "Super initiative Thomas ! Je prends volontiers une place, je te rejoins sur le Feu de camp Covoiturage 🚗✨",
+      "Super initiative <@Thomas Renard> ! Je prends volontiers une place, je te rejoins sur le Feu de camp Covoiturage 🚗✨",
     reply_to_message_id: 'msg-agora-1',
     reply_to_message: {
       id: 'msg-agora-1',
@@ -567,6 +569,8 @@ export const DEMO_MESSAGES: ChatMessage[] = [
       content: "J'ai 3 places disponibles dans ma voiture...",
     },
     quoted_excerpt: "J'ai 3 places disponibles dans ma voiture",
+    mentioned_user_ids: ['user-pygmee-thomas'],
+    mentioned_names: ['Thomas Renard'],
     attachments: [],
     emargements: [],
     created_at: minAgo(18),
@@ -577,9 +581,11 @@ export const DEMO_MESSAGES: ChatMessage[] = [
     canal_id: 'canal-gt-agora',
     author_id: 'user-manitou',
     content:
-      "Merci à tous pour votre réactivité ! N'oubliez pas que le buffet participatif démarre dès 20h30 après le vote des budgets 😊",
+      "Merci à tous pour votre réactivité ! <@Lucas Bernard> et <@Sarah Diallo>, n'oubliez pas que le buffet participatif démarre dès 20h30 après le vote des budgets 😊",
     reply_to_message_id: null,
     quoted_excerpt: null,
+    mentioned_user_ids: ['user-chef-comm', 'user-chef-event'],
+    mentioned_names: ['Lucas Bernard', 'Sarah Diallo'],
     attachments: [],
     emargements: [],
     created_at: minAgo(8),
@@ -636,7 +642,7 @@ export const DEMO_MESSAGES: ChatMessage[] = [
     canal_id: 'canal-comm-agora',
     author_id: 'user-pygmee-claire',
     content:
-      "Les contrastes en mode sombre rendent super bien avec les trois tipis colorés ! J'ai préparé les bandeaux pour la newsletter.",
+      "Les contrastes en mode sombre rendent super bien avec les trois tipis colorés ! <@Camille Moreau> et <@Lucas Bernard>, j'ai préparé les bandeaux pour la newsletter.",
     reply_to_message_id: 'msg-comm-1',
     reply_to_message: {
       id: 'msg-comm-1',
@@ -644,6 +650,8 @@ export const DEMO_MESSAGES: ChatMessage[] = [
       content: 'Vous pouvez prévisualiser la maquette web sur https://figma.com/file/tribbu-kit-2027',
     },
     quoted_excerpt: 'prévisualiser la maquette web',
+    mentioned_user_ids: ['user-manitou', 'user-chef-comm'],
+    mentioned_names: ['Camille Moreau', 'Lucas Bernard'],
     attachments: [],
     emargements: [],
     created_at: minAgo(4),

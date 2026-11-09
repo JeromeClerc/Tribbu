@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  AtSign,
   Bell,
   CheckCheck,
   Flame,
@@ -17,10 +18,17 @@ import {
   getCanalTypeLabelFr,
 } from '@/lib/utils';
 import { notificationService } from '@/services/notificationService';
-import type { CanalMutationSummary, CanalType } from '@/types/tribbu.types';
+import type {
+  Canal,
+  CanalMutationSummary,
+  CanalType,
+  ChatMessage,
+} from '@/types/tribbu.types';
 
 interface NotificationDrawerProps {
   mutatedCanaux: CanalMutationSummary[];
+  mentionedMessages: ChatMessage[];
+  canaux: Canal[];
   onMarkAllRead: () => Promise<void>;
 }
 
@@ -40,6 +48,8 @@ function getCanalIcon(type: CanalType) {
 
 export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   mutatedCanaux,
+  mentionedMessages,
+  canaux,
   onMarkAllRead,
 }) => {
   const {
@@ -58,6 +68,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   if (!notificationDrawerOpen) return null;
 
   const smsLogs = notificationService.getRecentSmsLogs();
+  const canalMap = new Map(canaux.map((c) => [c.id, c]));
 
   const handleSavePhoneSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,7 +95,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                Activité & Mutations récentes
+                Activité, Mutations & Mentions
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Depuis votre dernière connexion (
@@ -116,8 +127,71 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
           </div>
         </div>
 
-        {/* Liste des canaux ayant subi une mutation */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Contenu scrollable */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {/* 1. MENTIONS EXPLICITES <@nom_personne> */}
+          <div>
+            <div className="flex items-center justify-between mb-2.5">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-tribbu-purple-light flex items-center gap-1.5">
+                <AtSign className="w-3.5 h-3.5" />
+                <span>
+                  Messages où vous êtes cité(e) ({mentionedMessages.length})
+                </span>
+              </h3>
+              {user && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-tribbu-purple/15 text-tribbu-purple-light">
+                  &lt;@{user.display_name}&gt;
+                </span>
+              )}
+            </div>
+
+            {mentionedMessages.length === 0 ? (
+              <div className="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-tribbu-charcoal-border text-xs text-slate-500 dark:text-slate-400 text-center">
+                Aucun message ne contient encore la mention{' '}
+                <code>&lt;@{user?.display_name}&gt;</code>.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {mentionedMessages.slice(0, 6).map((msg) => {
+                  const canal = canalMap.get(msg.canal_id);
+                  if (!canal) return null;
+                  return (
+                    <button
+                      key={msg.id}
+                      type="button"
+                      onClick={() => {
+                        openCanalTab({
+                          canalId: canal.id,
+                          title: canal.name,
+                          type: canal.type,
+                          parentLabel: getCanalTypeLabelFr(canal.type),
+                        });
+                        setNotificationDrawerOpen(false);
+                      }}
+                      className="w-full text-left p-3 rounded-xl border border-tribbu-purple/30 bg-tribbu-purple/5 hover:border-tribbu-purple transition-all"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          {msg.author?.display_name || 'Membre'} dans{' '}
+                          <span className="text-tribbu-purple-light">
+                            {canal.name}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-slate-400 shrink-0">
+                          {formatRelativeTimeFr(msg.created_at)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                        {msg.content}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 2. CONVERSATIONS AYANT SUBI UNE MUTATION DEPUIS LA DERNIÈRE CONNEXION */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400 mb-2.5">
               Conversations modifiées ({mutatedCanaux.length})
@@ -199,7 +273,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
             )}
           </div>
 
-          {/* Configuration des alertes SMS sur téléphone mobile */}
+          {/* 3. CONFIGURATION DES ALERTES SMS SUR TÉLÉPHONE MOBILE */}
           <div className="pt-4 border-t border-slate-200 dark:border-tribbu-charcoal-border">
             <div className="flex items-center gap-2 mb-2">
               <Phone className="w-4 h-4 text-tribbu-teal" />
@@ -227,7 +301,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
 
               <label className="flex items-center justify-between gap-2 cursor-pointer">
                 <span className="text-xs text-slate-700 dark:text-slate-300">
-                  Recevoir les annonces urgentes par SMS
+                  Recevoir les annonces et mentions &lt;@nom&gt; par SMS
                 </span>
                 <input
                   type="checkbox"
@@ -276,4 +350,3 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     </div>
   );
 };
-

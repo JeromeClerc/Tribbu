@@ -48,6 +48,7 @@ export const App: React.FC = () => {
     summariesByCanalId,
     mutatedCanauxList,
     totalUnreadCount,
+    mentionedMessages,
     markAllRead,
   } = useUnreadCount({
     user,
@@ -102,7 +103,7 @@ export const App: React.FC = () => {
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-tribbu-charcoal-deep text-white gap-3">
         <div className="w-10 h-10 rounded-full border-3 border-tribbu-teal border-t-tribbu-green animate-spin" />
         <span className="text-xs font-semibold tracking-wide text-slate-300">
-          Initialisation de la Grande Tribbu...
+          Initialisation de la Grande Tribbu (Firebase)...
         </span>
       </div>
     );
@@ -134,11 +135,14 @@ export const App: React.FC = () => {
         associationName={grandeTribbu?.name || 'La Grande Tribbu'}
         totalUnreadCount={totalUnreadCount}
         mutatedChannelsCount={mutatedCanauxList.length}
+        mentionsCount={mentionedMessages.length}
       />
 
-      {/* Tiroir des notifications (Canaux ayant subi une mutation depuis la dernière connexion) */}
+      {/* Tiroir des notifications (Canaux modifiés + Messages où vous êtes cité(e) <@vous>) */}
       <NotificationDrawer
         mutatedCanaux={mutatedCanauxList}
+        mentionedMessages={mentionedMessages}
+        canaux={accessibleCanaux}
         onMarkAllRead={markAllRead}
       />
 
@@ -187,11 +191,11 @@ export const App: React.FC = () => {
                 canWrite={canWriteActiveCanal}
               />
 
-              {/* Liste fluide des messages avec émargements et liens cliquables */}
+              {/* Liste fluide des messages avec mentions <@nom_personne>, émargements et liens */}
               <MessageList
                 canal={activeCanal}
                 messages={activeCanalMessages}
-                currentUserId={user.id}
+                currentUser={user}
                 userRoles={membresRoles}
                 manitouId={grandeTribbu?.manitou_id || 'user-manitou'}
                 onConfirmEmargement={(messageId) =>
@@ -203,10 +207,11 @@ export const App: React.FC = () => {
               {/* Indicateur de frappe temps réel */}
               <TypingIndicator typingUsers={typingUsers} />
 
-              {/* Zone de saisie riche */}
+              {/* Zone de saisie riche avec autocomplétion <@nom_personne> */}
               <ChatInput
                 canal={activeCanal}
                 currentUserId={user.id}
+                profiles={profiles}
                 canWrite={canWriteActiveCanal}
                 isSending={isSending}
                 onSendMessage={async ({
@@ -274,4 +279,3 @@ export const App: React.FC = () => {
 };
 
 export default App;
-

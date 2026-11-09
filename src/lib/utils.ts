@@ -3,8 +3,10 @@ import { twMerge } from 'tailwind-merge';
 import type {
   Canal,
   CanalType,
+  ChatMessage,
   FeuDeCamp,
   MembreRole,
+  Profile,
   Tippi,
   TribbuRole,
 } from '@/types/tribbu.types';
@@ -120,23 +122,26 @@ export function getCanalTypeLabelFr(type: CanalType): string {
 }
 
 /**
- * Découpe un texte en segments (texte brut ou URL) pour convertir automatiquement
- * les liens en balises <a> sécurisées sans risque d'injection HTML.
+ * Découpe un texte en segments :
+ * - 'mention' : balises `<@nom_personne>` pour citer explicitement un membre
+ * - 'link'    : URLs (`https://...` ou `www....`) converties en balises `<a>`
+ * - 'text'    : texte standard
  */
 export interface TextSegment {
-  type: 'text' | 'link';
+  type: 'text' | 'link' | 'mention';
   value: string;
   href?: string;
+  mentionName?: string;
 }
 
-const URL_REGEX = /((?:https?:\/\/|www\.)[^\s<>"']+)/gi;
+const TOKEN_REGEX = /(<@[^>]+>|(?:https?:\/\/|www\.)[^\s<>"']+)/gi;
 
 export function parseTextWithLinks(text: string): TextSegment[] {
   if (!text) return [];
   const segments: TextSegment[] = [];
   let lastIndex = 0;
 
-  for (const match of text.matchAll(URL_REGEX)) {
+  for (const match of text.matchAll(TOKEN_REGEX)) {
     const matchIndex = match.index ?? 0;
     if (matchIndex > lastIndex) {
       segments.push({
@@ -144,14 +149,25 @@ export function parseTextWithLinks(text: string): TextSegment[] {
         value: text.slice(lastIndex, matchIndex),
       });
     }
-    const rawUrl = match[0];
-    const href = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
-    segments.push({
-      type: 'link',
-      value: rawUrl,
-      href,
-    });
-    lastIndex = matchIndex + rawUrl.length;
+
+    const token = match[0];
+    if (token.startsWith('<@') && token.endsWith('>')) {
+      const mentionName = token.slice(2, -1).trim();
+      segments.push({
+        type: 'mention',
+        value: token,
+        mentionName,
+      });
+    } else {
+      const href = token.startsWith('http') ? token : `https://${token}`;
+      segments.push({
+        type: 'link',
+        value: token,
+        href,
+      });
+    }
+
+    lastIndex = matchIndex + token.length;
   }
 
   if (lastIndex < text.length) {
@@ -165,7 +181,84 @@ export function parseTextWithLinks(text: string): TextSegment[] {
 }
 
 /**
- * Vérifie si un utilisateur a le droit de LIRE un canal selon la hiérarchie RLS Tribbu.
+ * Normalise un nom de personne pour comparer `<@Inès Lefèvre>` et `<@Inès_Lefèvre>` ou `<@ines.lefevre>`.
+ */
+export function normalizeMentionKey(str: string): string {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[_\s.-]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extrait la liste des noms et IDs des membres cités via `<@nom_personne>` dans un message.
+ */
+export function extractMentionsFromContent(
+  content: string,
+  profiles: Profile[]
+): { mentionedNames: string[]; mentionedUserIds: string[] } {
+  const mentionRegex = /<@([^>]+)>/g;
+  const mentionedNames: string[] = [];
+  const mentionedUserIds = new Set<string>();
+
+  for (const match of content.matchAll(mentionRegex)) {
+    const rawName = match[1].trim();
+    if (!rawName) continue;
+    mentionedNames.push(rawName);
+
+    const normTarget = normalizeMentionKey(rawName);
+    for (const prof of profiles) {
+      const normDisplay = normalizeMentionKey(prof.display_name);
+      const normEmailPrefix = normalizeMentionKey(prof.email.split('@')[0]);
+      if (
+        normDisplay === normTarget ||
+        normEmailPrefix === normTarget ||
+        normDisplay.startsWith(normTarget)
+      ) {
+        mentionedUserIds.add(prof.id);
+      }
+    }
+  }
+
+  return {
+    mentionedNames: Array.from(new Set(mentionedNames)),
+    mentionedUserIds: Array.from(mentionedUserIds),
+  };
+}
+
+/**
+ * Vérifie si un utilisateur donné est explicitement cité (`<@nom_personne>`) dans un message.
+ */
+export function isUserMentionedInMessage(
+  message: ChatMessage,
+  user: Profile | null
+): boolean {
+  if (!user) return false;
+  if (message.mentioned_user_ids?.includes(user.id)) {
+    return true;
+  }
+
+  const normUserDisplay = normalizeMentionKey(user.display_name);
+  const normUserFirst = normUserDisplay.split(' ')[0];
+
+  const mentionRegex = /<@([^>]+)>/g;
+  for (const match of message.content.matchAll(mentionRegex)) {
+    const normMention = normalizeMentionKey(match[1]);
+    if (
+      normMention === normUserDisplay ||
+      (normUserFirst.length >= 3 && normMention === normUserFirst)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Vérifie si un utilisateur a le droit de LIRE un canal selon la hiérarchie Tribbu.
  */
 export function canUserReadCanal(params: {
   userId: string;
@@ -222,8 +315,6 @@ export function canUserReadCanal(params: {
 
 /**
  * Vérifie si un utilisateur a le droit d'ÉCRIRE dans un canal.
- * Seuls le Grand Manitou et les Chefs peuvent écrire dans GRANDE_TRIBBU_ANNONCES.
- * Seuls le Grand Manitou et les Chefs de la Tribbu peuvent écrire dans TRIBBU_ANNONCES.
  */
 export function canUserWriteToCanal(params: {
   userId: string;
@@ -254,4 +345,3 @@ export function canUserWriteToCanal(params: {
 
   return canUserReadCanal(params);
 }
-

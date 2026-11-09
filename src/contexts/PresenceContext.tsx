@@ -6,7 +6,8 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
+import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { firestoreDb, isFirebaseConfigured } from '@/lib/firebaseClient';
 import { useAuth } from './AuthContext';
 import { useUIStore } from '@/lib/uiStore';
 import { DEMO_PROFILES } from '@/services/demoData';
@@ -85,7 +86,7 @@ export const PresenceProvider: React.FC<{ children: React.ReactNode }> = ({
       .filter((x): x is PresenceUser => x !== null);
   }, [user, activeCanalId]);
 
-  // Synchronisation Supabase Realtime Presence + BroadcastChannel inter-onglets
+  // Synchronisation Cloud Firestore `presence` + BroadcastChannel inter-onglets
   useEffect(() => {
     if (!user) return;
 
@@ -99,31 +100,22 @@ export const PresenceProvider: React.FC<{ children: React.ReactNode }> = ({
       onlineAt: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured) {
-      const channel = supabase.channel('tribbu:global_presence', {
-        config: { presence: { key: user.id } },
-      });
+    if (isFirebaseConfigured && firestoreDb) {
+      const myPresenceRef = doc(firestoreDb, 'presence', user.id);
+      void setDoc(myPresenceRef, myPresence, { merge: true });
 
-      channel
-        .on('presence', { event: 'sync' }, () => {
-          const state = channel.presenceState<PresenceUser>();
+      const unsubscribe = onSnapshot(
+        collection(firestoreDb, 'presence'),
+        (snap) => {
           const mapped: Record<string, PresenceUser> = {};
-          Object.entries(state).forEach(([key, list]) => {
-            if (list && list.length > 0) {
-              mapped[key] = list[list.length - 1];
-            }
+          snap.docs.forEach((d) => {
+            mapped[d.id] = d.data() as PresenceUser;
           });
           setRemoteUsers(mapped);
-        })
-        .subscribe(async (status) => {
-          if (status === 'SUBSCRIBED') {
-            await channel.track(myPresence);
-          }
-        });
+        }
+      );
 
-      return () => {
-        void supabase.removeChannel(channel);
-      };
+      return () => unsubscribe();
     }
 
     // Mode inter-onglets navigateur via BroadcastChannel
@@ -194,7 +186,14 @@ export const PresenceProvider: React.FC<{ children: React.ReactNode }> = ({
     map.set(user.id, selfPresence);
 
     return Array.from(map.values());
-  }, [user, globalRole, activeCanalId, myTypingCanalId, simulatedPeers, remoteUsers]);
+  }, [
+    user,
+    globalRole,
+    activeCanalId,
+    myTypingCanalId,
+    simulatedPeers,
+    remoteUsers,
+  ]);
 
   const getUsersInCanal = useCallback(
     (canalId: string) =>
@@ -231,4 +230,3 @@ export function usePresence(): PresenceContextValue {
   }
   return ctx;
 }
-

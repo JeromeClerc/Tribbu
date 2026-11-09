@@ -5,9 +5,10 @@ import React, {
   useEffect,
   useState,
 } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { authService } from '@/services/authService';
 import { chatService } from '@/services/chatService';
-import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
+import { firebaseAuth, isFirebaseConfigured } from '@/lib/firebaseClient';
 import type { MembreRole, Profile, TribbuRole } from '@/types/tribbu.types';
 
 export interface PendingInvitationParams {
@@ -108,13 +109,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     void refreshAuth();
 
-    if (isSupabaseConfigured) {
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange(() => {
+    if (isFirebaseConfigured && firebaseAuth) {
+      const unsubscribe = onAuthStateChanged(firebaseAuth, () => {
         void refreshAuth();
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     }
 
     const handleLocalMutation = () => {
@@ -147,7 +146,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       await authService.finalizeInvitationSignup(params);
       setPendingInvitation(null);
-      // Nettoie l'URL après finalisation du compte invité
       const cleanUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
       await refreshAuth();
@@ -214,4 +212,3 @@ export function useAuth(): AuthContextValue {
   }
   return ctx;
 }
-

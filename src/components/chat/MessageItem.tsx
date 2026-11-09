@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  AtSign,
   CheckCircle2,
   CornerDownRight,
   ExternalLink,
@@ -13,6 +14,8 @@ import { Attachments } from './Attachments';
 import {
   cn,
   formatTimeFr,
+  isUserMentionedInMessage,
+  normalizeMentionKey,
   parseTextWithLinks,
 } from '@/lib/utils';
 import { useUIStore } from '@/lib/uiStore';
@@ -20,13 +23,14 @@ import type {
   CanalType,
   ChatMessage,
   MembreRole,
+  Profile,
   TribbuRole,
 } from '@/types/tribbu.types';
 
 interface MessageItemProps {
   message: ChatMessage;
   canalType: CanalType;
-  currentUserId: string;
+  currentUser: Profile;
   userRoles: MembreRole[];
   manitouId: string;
   onConfirmEmargement: (messageId: string) => Promise<void>;
@@ -50,15 +54,16 @@ function resolveAuthorRole(
 export const MessageItem: React.FC<MessageItemProps> = ({
   message,
   canalType,
-  currentUserId,
+  currentUser,
   userRoles,
   manitouId,
   onConfirmEmargement,
   isConfirmingEmargement,
 }) => {
-  const { setReplyTarget } = useUIStore();
+  const { setReplyTarget, setSearchQuery } = useUIStore();
 
-  const isOwn = message.author_id === currentUserId;
+  const isOwn = message.author_id === currentUser.id;
+  const isMentioned = isUserMentionedInMessage(message, currentUser);
   const authorName = message.author?.display_name || 'Membre Tribbu';
   const authorRole = resolveAuthorRole(
     message.author_id,
@@ -71,7 +76,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     canalType === 'TRIBBU_ANNONCES';
 
   const hasConfirmedEmargement = message.emargements.some(
-    (e) => e.user_id === currentUserId
+    (e) => e.user_id === currentUser.id
   );
 
   // Permet de répondre au message entier OU à la partie de texte surlignée par l'utilisateur
@@ -92,16 +97,19 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   };
 
   const segments = parseTextWithLinks(message.content);
+  const normCurrentUser = normalizeMentionKey(currentUser.display_name);
 
   return (
     <div
       className={cn(
         'group relative flex items-start gap-3 px-4 py-3 rounded-2xl transition-colors',
-        isAnnouncementChannel
-          ? 'bg-white dark:bg-tribbu-charcoal border border-tribbu-green/25 shadow-soft my-2'
-          : isOwn
-            ? 'bg-tribbu-teal/8 dark:bg-tribbu-teal/12 hover:bg-tribbu-teal/12 dark:hover:bg-tribbu-teal/18'
-            : 'hover:bg-slate-100/80 dark:hover:bg-tribbu-charcoal/60'
+        isMentioned
+          ? 'bg-tribbu-purple/10 dark:bg-tribbu-purple/15 border-l-4 border-tribbu-purple shadow-xs my-1.5'
+          : isAnnouncementChannel
+            ? 'bg-white dark:bg-tribbu-charcoal border border-tribbu-green/25 shadow-soft my-2'
+            : isOwn
+              ? 'bg-tribbu-teal/8 dark:bg-tribbu-teal/12 hover:bg-tribbu-teal/12 dark:hover:bg-tribbu-teal/18'
+              : 'hover:bg-slate-100/80 dark:hover:bg-tribbu-charcoal/60'
       )}
     >
       <Avatar
@@ -112,13 +120,19 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       />
 
       <div className="min-w-0 flex-1">
-        {/* En-tête du message : Auteur, Rôle, Heure, Action Répondre */}
+        {/* En-tête du message : Auteur, Rôle, Badge Mention, Heure, Action Répondre */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
               {authorName}
             </span>
             <RoleBadge role={authorRole} size="xs" />
+            {isMentioned && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-tribbu-purple text-white shadow-xs">
+                <AtSign className="w-2.5 h-2.5" />
+                <span>Vous êtes cité(e)</span>
+              </span>
+            )}
             <time
               dateTime={message.created_at}
               className="text-[11px] text-slate-400"
@@ -163,25 +177,48 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           </div>
         )}
 
-        {/* Corps du message avec sauts de ligne et liens cliquables automatiques */}
+        {/* Corps du message avec sauts de ligne, mentions <@nom_personne> et liens cliquables */}
         {message.content && (
           <div className="mt-1 text-xs sm:text-sm text-slate-800 dark:text-slate-100 whitespace-pre-wrap break-words leading-relaxed">
-            {segments.map((seg, i) =>
-              seg.type === 'link' ? (
-                <a
-                  key={i}
-                  href={seg.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-tribbu-teal hover:text-tribbu-teal-light underline underline-offset-2 font-medium break-all"
-                >
-                  <span>{seg.value}</span>
-                  <ExternalLink className="w-3 h-3 shrink-0 inline" />
-                </a>
-              ) : (
-                <React.Fragment key={i}>{seg.value}</React.Fragment>
-              )
-            )}
+            {segments.map((seg, i) => {
+              if (seg.type === 'mention' && seg.mentionName) {
+                const isSelfMention =
+                  normalizeMentionKey(seg.mentionName) === normCurrentUser;
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setSearchQuery(`<@${seg.mentionName}>`)}
+                    title={`Filtrer les messages citant <@${seg.mentionName}>`}
+                    className={cn(
+                      'inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-semibold transition-all cursor-pointer align-baseline',
+                      isSelfMention
+                        ? 'bg-tribbu-purple text-white ring-2 ring-tribbu-purple-light/40 shadow-xs'
+                        : 'bg-tribbu-teal/15 text-tribbu-teal-dark dark:text-tribbu-teal-light border border-tribbu-teal/30 hover:bg-tribbu-teal/25'
+                    )}
+                  >
+                    <span>@{seg.mentionName}</span>
+                  </button>
+                );
+              }
+
+              if (seg.type === 'link') {
+                return (
+                  <a
+                    key={i}
+                    href={seg.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-tribbu-teal hover:text-tribbu-teal-light underline underline-offset-2 font-medium break-all"
+                  >
+                    <span>{seg.value}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0 inline" />
+                  </a>
+                );
+              }
+
+              return <React.Fragment key={i}>{seg.value}</React.Fragment>;
+            })}
           </div>
         )}
 
@@ -235,4 +272,3 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     </div>
   );
 };
-

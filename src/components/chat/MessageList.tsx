@@ -1,18 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, MessageSquarePlus, Sparkles } from 'lucide-react';
+import {
+  ArrowDown,
+  AtSign,
+  MessageSquarePlus,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { MessageItem } from './MessageItem';
-import { formatDateHeaderFr } from '@/lib/utils';
+import { formatDateHeaderFr, isUserMentionedInMessage } from '@/lib/utils';
 import { useUIStore } from '@/lib/uiStore';
 import type {
   Canal,
   ChatMessage,
   MembreRole,
+  Profile,
 } from '@/types/tribbu.types';
 
 interface MessageListProps {
   canal: Canal;
   messages: ChatMessage[];
-  currentUserId: string;
+  currentUser: Profile;
   userRoles: MembreRole[];
   manitouId: string;
   onConfirmEmargement: (messageId: string) => Promise<void>;
@@ -22,7 +29,7 @@ interface MessageListProps {
 export const MessageList: React.FC<MessageListProps> = ({
   canal,
   messages,
-  currentUserId,
+  currentUser,
   userRoles,
   manitouId,
   onConfirmEmargement,
@@ -31,23 +38,32 @@ export const MessageList: React.FC<MessageListProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+
   const searchQuery = useUIStore((s) => s.searchQuery);
+  const setSearchQuery = useUIStore((s) => s.setSearchQuery);
+  const filterMentionsOnly = useUIStore((s) => s.filterMentionsOnly);
+  const setFilterMentionsOnly = useUIStore((s) => s.setFilterMentionsOnly);
 
   const filteredMessages = useMemo(() => {
-    if (!searchQuery.trim()) return messages;
-    const q = searchQuery.toLowerCase();
-    return messages.filter(
-      (m) =>
-        m.content.toLowerCase().includes(q) ||
-        m.author?.display_name.toLowerCase().includes(q)
-    );
-  }, [messages, searchQuery]);
+    let list = messages;
+    if (filterMentionsOnly) {
+      list = list.filter((m) => isUserMentionedInMessage(m, currentUser));
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (m) =>
+          m.content.toLowerCase().includes(q) ||
+          m.author?.display_name.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [messages, filterMentionsOnly, searchQuery, currentUser]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior });
   };
 
-  // Auto-scroll intelligent lors d'un changement de canal ou d'un nouveau message
   useEffect(() => {
     scrollToBottom('auto');
   }, [canal.id]);
@@ -73,27 +89,57 @@ export const MessageList: React.FC<MessageListProps> = ({
       className="relative flex-1 overflow-y-auto px-2 sm:px-5 py-4 space-y-1"
     >
       {/* Bannière d'accueil du canal */}
-      <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-tribbu-teal/10 via-tribbu-green/10 to-tribbu-purple/10 border border-slate-200/70 dark:border-tribbu-charcoal-border">
+      <div className="mb-4 p-4 rounded-2xl bg-gradient-to-r from-tribbu-teal/10 via-tribbu-green/10 to-tribbu-purple/10 border border-slate-200/70 dark:border-tribbu-charcoal-border">
         <div className="flex items-center gap-2 text-xs font-bold text-tribbu-teal">
           <Sparkles className="w-4 h-4 text-tribbu-green" />
           <span>Début de l'historique — {canal.name}</span>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
           {canal.description ||
-            'Échangez en temps réel avec les membres autorisés de ce canal. Les liens collés sont automatiquement convertis et vous pouvez surligner un extrait pour y répondre.'}
+            'Échangez en temps réel avec les membres autorisés. Utilisez <@nom_personne> (ou tapez @) pour citer un membre afin qu’il retrouve facilement votre message.'}
         </p>
       </div>
+
+      {/* Bandeau actif lorsque le filtre "Mes mentions" ou recherche est activé */}
+      {(filterMentionsOnly || searchQuery.trim()) && (
+        <div className="mb-4 px-3.5 py-2.5 rounded-xl bg-tribbu-purple/15 border border-tribbu-purple/35 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 font-semibold text-tribbu-purple-dark dark:text-tribbu-purple-light">
+            <AtSign className="w-4 h-4 shrink-0" />
+            <span>
+              {filterMentionsOnly &&
+                `Messages où vous êtes cité(e) via <@${currentUser.display_name}>`}
+              {filterMentionsOnly && searchQuery.trim() && ' • '}
+              {searchQuery.trim() && `Filtre : « ${searchQuery} »`}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterMentionsOnly(false);
+              setSearchQuery('');
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/80 dark:bg-tribbu-charcoal text-slate-700 dark:text-slate-200 font-semibold hover:text-rose-500 transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Afficher tous les messages</span>
+          </button>
+        </div>
+      )}
 
       {filteredMessages.length === 0 ? (
         <div className="py-14 text-center">
           <MessageSquarePlus className="w-10 h-10 text-slate-400 mx-auto mb-2 opacity-60" />
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-            {searchQuery
-              ? `Aucun message ne correspond à « ${searchQuery} »`
-              : 'Aucun message dans ce canal pour le moment'}
+            {filterMentionsOnly
+              ? `Aucune mention <@${currentUser.display_name}> dans ce canal`
+              : searchQuery
+                ? `Aucun message ne correspond à « ${searchQuery} »`
+                : 'Aucun message dans ce canal pour le moment'}
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Lancez la discussion ou partagez un document (.jpg, .png, .pdf).
+            {filterMentionsOnly
+              ? 'Désactivez le filtre « Mes mentions » pour voir toute la discussion.'
+              : 'Lancez la discussion, citez un membre avec <@nom_personne> ou partagez un fichier.'}
           </p>
         </div>
       ) : (
@@ -120,7 +166,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               <MessageItem
                 message={msg}
                 canalType={canal.type}
-                currentUserId={currentUserId}
+                currentUser={currentUser}
                 userRoles={userRoles}
                 manitouId={manitouId}
                 onConfirmEmargement={onConfirmEmargement}
@@ -146,4 +192,3 @@ export const MessageList: React.FC<MessageListProps> = ({
     </div>
   );
 };
-

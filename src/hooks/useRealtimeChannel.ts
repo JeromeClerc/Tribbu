@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { firestoreDb, isFirebaseConfigured } from '@/lib/firebaseClient';
 import { QUERY_KEYS } from './useChat';
 
 /**
- * Souscrit aux changements temps réel Supabase (Postgres Changes) et au BroadcastChannel local
+ * Souscrit aux changements temps réel Cloud Firestore (`onSnapshot`) et au BroadcastChannel local
  * pour synchroniser instantanément les messages, émargements, canaux et rôles.
  */
 export function useRealtimeChannel(activeCanalId: string | null) {
@@ -21,48 +22,44 @@ export function useRealtimeChannel(activeCanalId: string | null) {
       }
     };
 
-    if (isSupabaseConfigured) {
-      const channel = supabase
-        .channel('tribbu:realtime-db-sync')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'messages' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'emargements' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'canaux' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'tribbus' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'tippis' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'feux_de_camp' },
-          refreshQueries
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'membres_roles' },
-          refreshQueries
-        )
-        .subscribe();
+    if (isFirebaseConfigured && firestoreDb) {
+      const unsubMessages = onSnapshot(
+        collection(firestoreDb, 'messages'),
+        refreshQueries
+      );
+      const unsubEmargements = onSnapshot(
+        collection(firestoreDb, 'emargements'),
+        refreshQueries
+      );
+      const unsubCanaux = onSnapshot(
+        collection(firestoreDb, 'canaux'),
+        refreshQueries
+      );
+      const unsubTribbus = onSnapshot(
+        collection(firestoreDb, 'tribbus'),
+        refreshQueries
+      );
+      const unsubTippis = onSnapshot(
+        collection(firestoreDb, 'tippis'),
+        refreshQueries
+      );
+      const unsubFeux = onSnapshot(
+        collection(firestoreDb, 'feux_de_camp'),
+        refreshQueries
+      );
+      const unsubRoles = onSnapshot(
+        collection(firestoreDb, 'membres_roles'),
+        refreshQueries
+      );
 
       return () => {
-        void supabase.removeChannel(channel);
+        unsubMessages();
+        unsubEmargements();
+        unsubCanaux();
+        unsubTribbus();
+        unsubTippis();
+        unsubFeux();
+        unsubRoles();
       };
     }
 
@@ -84,4 +81,3 @@ export function useRealtimeChannel(activeCanalId: string | null) {
     };
   }, [activeCanalId, queryClient]);
 }
-

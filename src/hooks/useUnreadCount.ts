@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { notificationService } from '@/services/notificationService';
-import { canUserReadCanal } from '@/lib/utils';
+import { canUserReadCanal, isUserMentionedInMessage } from '@/lib/utils';
 import type {
   Canal,
   CanalMutationSummary,
@@ -68,23 +68,15 @@ export function useUnreadCount(params: {
 
   const summariesByCanalId = useMemo<Record<string, CanalMutationSummary>>(() => {
     if (!user) return {};
-    void readTick; // Dépendance réactive aux marquages de lecture
+    void readTick;
     return notificationService.computeCanalSummaries({
-      userId: user.id,
-      userLastSeenAt: user.last_seen_at,
+      user,
       canaux: accessibleCanaux,
       messages,
       tribbus,
       activeCanalId,
     });
-  }, [
-    user,
-    accessibleCanaux,
-    messages,
-    tribbus,
-    activeCanalId,
-    readTick,
-  ]);
+  }, [user, accessibleCanaux, messages, tribbus, activeCanalId, readTick]);
 
   const mutatedCanauxList = useMemo(() => {
     return Object.values(summariesByCanalId)
@@ -103,6 +95,21 @@ export function useUnreadCount(params: {
     );
   }, [summariesByCanalId]);
 
+  // Liste globale des messages dans lesquels l'utilisateur courant est cité via <@nom_personne>
+  const mentionedMessages = useMemo(() => {
+    if (!user) return [];
+    const accessibleIds = new Set(accessibleCanaux.map((c) => c.id));
+    return messages
+      .filter(
+        (m) =>
+          accessibleIds.has(m.canal_id) && isUserMentionedInMessage(m, user)
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+  }, [user, accessibleCanaux, messages]);
+
   const markAllRead = async () => {
     if (!user) return;
     await notificationService.markAllCanauxAsRead(
@@ -116,7 +123,7 @@ export function useUnreadCount(params: {
     summariesByCanalId,
     mutatedCanauxList,
     totalUnreadCount,
+    mentionedMessages,
     markAllRead,
   };
 }
-

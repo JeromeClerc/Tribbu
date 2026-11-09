@@ -29,6 +29,7 @@ interface UIState {
   modalContextTribbuId: string | null;
   replyTarget: ReplyTarget | null;
   searchQuery: string;
+  filterMentionsOnly: boolean;
 
   openCanalTab: (tab: OpenTab) => void;
   closeCanalTab: (canalId: string) => void;
@@ -42,6 +43,8 @@ interface UIState {
   closeModal: () => void;
   setReplyTarget: (target: ReplyTarget | null) => void;
   setSearchQuery: (query: string) => void;
+  setFilterMentionsOnly: (val: boolean) => void;
+  toggleFilterMentionsOnly: () => void;
 }
 
 const DEFAULT_TABS: OpenTab[] = [
@@ -83,6 +86,7 @@ export const useUIStore = create<UIState>()(
       modalContextTribbuId: null,
       replyTarget: null,
       searchQuery: '',
+      filterMentionsOnly: false,
 
       openCanalTab: (tab) => {
         const currentTabs = get().openTabs;
@@ -101,7 +105,7 @@ export const useUIStore = create<UIState>()(
 
       closeCanalTab: (canalId) => {
         const { openTabs, activeCanalId } = get();
-        if (openTabs.length <= 1) return; // Garde toujours au moins un onglet ouvert
+        if (openTabs.length <= 1) return;
 
         const idx = openTabs.findIndex((t) => t.canalId === canalId);
         const nextTabs = openTabs.filter((t) => t.canalId !== canalId);
@@ -136,6 +140,9 @@ export const useUIStore = create<UIState>()(
       closeModal: () => set({ activeModal: null, modalContextTribbuId: null }),
       setReplyTarget: (target) => set({ replyTarget: target }),
       setSearchQuery: (query) => set({ searchQuery: query }),
+      setFilterMentionsOnly: (val) => set({ filterMentionsOnly: val }),
+      toggleFilterMentionsOnly: () =>
+        set((state) => ({ filterMentionsOnly: !state.filterMentionsOnly })),
     }),
     {
       name: 'tribbu-ui-tabs-storage',
@@ -147,4 +154,3 @@ export const useUIStore = create<UIState>()(
     }
   )
 );
-

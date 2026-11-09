@@ -1,8 +1,11 @@
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
+import { doc, setDoc } from 'firebase/firestore';
+import { firestoreDb, isFirebaseConfigured } from '@/lib/firebaseClient';
+import { isUserMentionedInMessage } from '@/lib/utils';
 import type {
   Canal,
   CanalMutationSummary,
   ChatMessage,
+  Profile,
   Tribbu,
 } from '@/types/tribbu.types';
 
@@ -33,7 +36,7 @@ export const notificationService = {
   },
 
   /**
-   * Marque un canal comme lu à l'instant T (localement et dans Supabase `canal_lectures`).
+   * Marque un canal comme lu à l'instant T (localement et dans Firestore `canal_lectures`).
    */
   async markCanalAsRead(canalId: string, userId: string): Promise<void> {
     const nowIso = new Date().toISOString();
@@ -50,20 +53,23 @@ export const notificationService = {
       // Ignore storage error
     }
 
-    if (isSupabaseConfigured) {
-      await supabase.from('canal_lectures').upsert(
+    if (isFirebaseConfigured && firestoreDb) {
+      const lectureId = `${canalId}_${userId}`;
+      await setDoc(
+        doc(firestoreDb, 'canal_lectures', lectureId),
         {
+          id: lectureId,
           canal_id: canalId,
           user_id: userId,
           last_read_at: nowIso,
         },
-        { onConflict: 'canal_id,user_id' }
+        { merge: true }
       );
     }
   },
 
   /**
-   * Marque l'ensemble des canaux comme lus et met à jour `last_seen_at`.
+   * Marque l'ensemble des canaux comme lus et met à jour `last_seen_at` dans Firestore.
    */
   async markAllCanauxAsRead(canalIds: string[], userId: string): Promise<void> {
     const nowIso = new Date().toISOString();
@@ -82,39 +88,33 @@ export const notificationService = {
       // Ignore
     }
 
-    if (isSupabaseConfigured) {
-      await supabase
-        .from('profiles')
-        .update({ last_seen_at: nowIso, updated_at: nowIso })
-        .eq('id', userId);
+    if (isFirebaseConfigured && firestoreDb) {
+      await setDoc(
+        doc(firestoreDb, 'profiles', userId),
+        { last_seen_at: nowIso, updated_at: nowIso },
+        { merge: true }
+      );
     }
   },
 
   /**
    * Calcule pour chaque canal accessible :
    * - le nombre de messages non-lus (`unreadCount`)
+   * - le nombre de mentions explicites `<@nom_personne>` de l'utilisateur (`mentionCount`)
    * - si le canal a subi une mutation depuis la dernière connexion (`mutatedSinceLastSeen`)
    * - l'aperçu du dernier message
    */
   computeCanalSummaries(params: {
-    userId: string;
-    userLastSeenAt: string;
+    user: Profile;
     canaux: Canal[];
     messages: ChatMessage[];
     tribbus: Tribbu[];
     activeCanalId: string | null;
   }): Record<string, CanalMutationSummary> {
-    const {
-      userId,
-      userLastSeenAt,
-      canaux,
-      messages,
-      tribbus,
-      activeCanalId,
-    } = params;
+    const { user, canaux, messages, tribbus, activeCanalId } = params;
 
-    const readMap = this.getReadTimestampsMap(userId);
-    const lastSeenTime = new Date(userLastSeenAt).getTime();
+    const readMap = this.getReadTimestampsMap(user.id);
+    const lastSeenTime = new Date(user.last_seen_at).getTime();
     const tribbuMap = new Map(tribbus.map((t) => [t.id, t.name]));
 
     const result: Record<string, CanalMutationSummary> = {};
@@ -127,7 +127,6 @@ export const notificationService = {
           : undefined;
 
       const lastReadIso = readMap[canal.id];
-      // Si l'utilisateur n'a jamais ouvert ce canal dans la session, on se base sur last_seen_at
       const thresholdTime = lastReadIso
         ? new Date(lastReadIso).getTime()
         : lastSeenTime;
@@ -138,9 +137,13 @@ export const notificationService = {
         ? []
         : canalMessages.filter(
             (m) =>
-              m.author_id !== userId &&
+              m.author_id !== user.id &&
               new Date(m.created_at).getTime() > thresholdTime
           );
+
+      const mentionCount = canalMessages.filter((m) =>
+        isUserMentionedInMessage(m, user)
+      ).length;
 
       const latestActivityIso = lastMsg?.created_at || canal.last_message_at;
       const latestActivityTime = new Date(latestActivityIso).getTime();
@@ -152,6 +155,7 @@ export const notificationService = {
       result[canal.id] = {
         canal,
         unreadCount: unreadMessages.length,
+        mentionCount,
         mutatedSinceLastSeen,
         lastMessagePreview: lastMsg?.content,
         lastMessageAuthor: lastMsg?.author?.display_name,
@@ -166,8 +170,8 @@ export const notificationService = {
   },
 
   /**
-   * Simule ou déclenche via Edge Function Supabase l'envoi d'une alerte SMS
-   * sur le numéro de téléphone des membres concernés lors d'une annonce importante.
+   * Simule ou déclenche via Firebase Cloud Functions l'envoi d'une alerte SMS
+   * sur le numéro de téléphone des membres concernés lors d'une annonce ou mention.
    */
   async dispatchPhoneNotification(params: {
     recipientPhone: string;
@@ -220,4 +224,3 @@ export const notificationService = {
     }
   },
 };
-
