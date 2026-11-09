@@ -454,7 +454,7 @@ export const AuthScreen: React.FC = () => {
                       type="tel"
                       value={invitePhone}
                       onChange={(e) => setInvitePhone(e.target.value)}
-                      placeholder="+33 6 12 34 56 78"
+                      placeholder="+41 70 000 00 00"
                       className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-tribbu-charcoal-deep border border-slate-300 dark:border-tribbu-charcoal-border text-slate-900 dark:text-white focus:border-tribbu-teal focus:outline-none"
                     />
                   </div>
@@ -639,7 +639,7 @@ export const AuthScreen: React.FC = () => {
                         type="tel"
                         value={creatorPhone}
                         onChange={(e) => setCreatorPhone(e.target.value)}
-                        placeholder="+33 6 00 00 00 00"
+                        placeholder="+41 70 000 00 00"
                         className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-white dark:bg-tribbu-charcoal border border-slate-300 dark:border-tribbu-charcoal-border text-slate-900 dark:text-white focus:border-tribbu-teal focus:outline-none"
                       />
                     </div>
@@ -765,7 +765,7 @@ export const AuthScreen: React.FC = () => {
                             onChange={(e) =>
                               setAssociationContactPhone(e.target.value)
                             }
-                            placeholder="+33 4 72 00 00 00"
+                            placeholder="+41 70 000 00 00"
                             className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-white dark:bg-tribbu-charcoal border border-slate-300 dark:border-tribbu-charcoal-border text-slate-900 dark:text-white focus:border-tribbu-teal focus:outline-none"
                           />
                         </div>
