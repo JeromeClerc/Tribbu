@@ -254,8 +254,8 @@ export const AuthScreen: React.FC = () => {
     !isMemberOfActiveAssociation
   ) {
     return (
-      <div className="min-h-screen w-full bg-tribbu-ivory dark:bg-tribbu-charcoal-deep flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-lg rounded-3xl bg-white dark:bg-tribbu-charcoal border border-slate-200 dark:border-tribbu-charcoal-border shadow-2xl overflow-hidden">
+      <div className="h-[100dvh] w-full overflow-y-auto overscroll-y-contain bg-tribbu-ivory dark:bg-tribbu-charcoal-deep flex flex-col items-center p-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
+        <div className="my-auto w-full max-w-lg shrink-0 rounded-3xl bg-white dark:bg-tribbu-charcoal border border-slate-200 dark:border-tribbu-charcoal-border shadow-2xl overflow-hidden">
           <div className="p-6 text-center bg-gradient-to-b from-rose-500/15 via-tribbu-purple/10 to-transparent border-b border-slate-200/70 dark:border-tribbu-charcoal-border">
             <TribbuLogo size="lg" className="justify-center" />
             <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/15 text-rose-500 text-xs font-bold">
@@ -320,8 +320,8 @@ export const AuthScreen: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen w-full bg-tribbu-ivory dark:bg-tribbu-charcoal-deep flex flex-col justify-center items-center p-4 py-8">
-      <div className="w-full max-w-2xl rounded-3xl bg-white dark:bg-tribbu-charcoal border border-slate-200 dark:border-tribbu-charcoal-border shadow-2xl overflow-hidden">
+    <div className="h-[100dvh] w-full overflow-y-auto overscroll-y-contain bg-tribbu-ivory dark:bg-tribbu-charcoal-deep flex flex-col items-center px-3 py-6 sm:p-6 md:py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+      <div className="my-auto w-full max-w-2xl shrink-0 rounded-3xl bg-white dark:bg-tribbu-charcoal border border-slate-200 dark:border-tribbu-charcoal-border shadow-2xl overflow-hidden">
         {/* Bandeau identitaire avec le logo Tribbu */}
         <div className="p-6 text-center bg-gradient-to-b from-tribbu-teal/15 via-tribbu-green/10 to-transparent border-b border-slate-200/70 dark:border-tribbu-charcoal-border">
           <TribbuLogo size="xl" className="justify-center" />
